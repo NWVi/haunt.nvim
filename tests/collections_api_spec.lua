@@ -335,6 +335,156 @@ describe("haunt.api collections", function()
 		end)
 	end)
 
+	describe("import_collection", function()
+		local json_buf
+
+		--- Put JSON in a buffer and make it current, as `:HauntCollectionImport % `
+		--- would see it.
+		---@param entries table
+		local function json_buffer(entries)
+			json_buf = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_buf_set_lines(json_buf, 0, -1, false, vim.split(vim.json.encode(entries), "\n"))
+			vim.api.nvim_set_current_buf(json_buf)
+		end
+
+		after_each(function()
+			if json_buf and vim.api.nvim_buf_is_valid(json_buf) then
+				vim.api.nvim_buf_delete(json_buf, { force = true })
+			end
+			json_buf = nil
+		end)
+
+		it("creates a collection from the current buffer and switches to it", function()
+			json_buffer({
+				{ file = "/tmp/a.lua", line = 3, summary = "first finding" },
+				{ file = "/tmp/b.lua", line = 9, summary = "second finding" },
+			})
+
+			assert.is_true(api.import_collection("review"))
+
+			assert.are.equal("review", collections.get_active())
+			assert.are.equal(2, #api.get_bookmarks())
+		end)
+
+		it("annotates bookmarks with the summary", function()
+			json_buffer({ { file = "/tmp/a.lua", line = 3, summary = "the summary" } })
+			api.import_collection("review")
+
+			assert.are.equal("the summary", api.get_bookmarks()[1].note)
+		end)
+
+		it("persists the imported bookmarks", function()
+			json_buffer({ { file = "/tmp/a.lua", line = 3, summary = "x" } })
+			api.import_collection("review")
+
+			assert.are.equal(1, vim.fn.filereadable(persistence.get_storage_path()))
+
+			-- Round-trip: they survive a switch away and back.
+			api.switch_collection("default")
+			api.switch_collection("review")
+			assert.are.equal(1, #api.get_bookmarks())
+		end)
+
+		it("imports from a file path", function()
+			local path = vim.fn.tempname() .. ".json"
+			vim.fn.writefile({ vim.json.encode({ { file = "/tmp/a.lua", line = 1, summary = "from file" } }) }, path)
+
+			assert.is_true(api.import_collection("review", path))
+			assert.are.equal("from file", api.get_bookmarks()[1].note)
+
+			vim.fn.delete(path)
+		end)
+
+		-- The user asked for refuse-not-merge, so an import can never quietly
+		-- rewrite bookmarks that already exist.
+		it("refuses when the collection already exists", function()
+			api.create_collection("review", { switch = false })
+			json_buffer({ { file = "/tmp/a.lua", line = 1, summary = "x" } })
+
+			assert.is_false(api.import_collection("review"))
+		end)
+
+		it("leaves an existing collection's bookmarks untouched when refusing", function()
+			local bufnr, test_file = helpers.create_test_buffer()
+			api.create_collection("review")
+			annotate_at(1, "hand-made")
+
+			json_buffer({ { file = "/tmp/a.lua", line = 1, summary = "imported" } })
+			assert.is_false(api.import_collection("review"))
+
+			api.switch_collection("review")
+			assert.are.equal(1, #api.get_bookmarks())
+			assert.are.equal("hand-made", api.get_bookmarks()[1].note)
+
+			helpers.cleanup_buffer(bufnr, test_file)
+		end)
+
+		it("rejects an invalid collection name", function()
+			json_buffer({ { file = "/tmp/a.lua", line = 1, summary = "x" } })
+			assert.is_false(api.import_collection("a|b"))
+			assert.is_false(collections.exists("a|b"))
+		end)
+
+		it("rejects the reserved default name", function()
+			json_buffer({ { file = "/tmp/a.lua", line = 1, summary = "x" } })
+			assert.is_false(api.import_collection("default"))
+		end)
+
+		-- Don't leave an empty collection behind for an import that found nothing.
+		it("does not create a collection from undecodable JSON", function()
+			json_buf = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_buf_set_lines(json_buf, 0, -1, false, { "{ not json" })
+			vim.api.nvim_set_current_buf(json_buf)
+
+			assert.is_false(api.import_collection("review"))
+			assert.is_false(collections.exists("review"))
+		end)
+
+		it("does not create a collection from an empty array", function()
+			json_buffer({})
+			assert.is_false(api.import_collection("review"))
+			assert.is_false(collections.exists("review"))
+		end)
+
+		it("does not create a collection when every entry is malformed", function()
+			json_buffer({ { line = 1 }, { file = "" } })
+			assert.is_false(api.import_collection("review"))
+			assert.is_false(collections.exists("review"))
+		end)
+
+		it("does not create a collection from a missing file", function()
+			assert.is_false(api.import_collection("review", "/nope/missing.json"))
+			assert.is_false(collections.exists("review"))
+		end)
+
+		it("imports the good entries and skips the bad", function()
+			json_buffer({
+				{ file = "/tmp/a.lua", line = 1, summary = "good" },
+				{ line = 2, summary = "no file" },
+			})
+
+			assert.is_true(api.import_collection("review"))
+			assert.are.equal(1, #api.get_bookmarks())
+		end)
+
+		-- Imported bookmarks arrive with no extmarks; a buffer already open must
+		-- get its signs and annotations drawn now, not on next load.
+		it("renders visuals in an already-open buffer", function()
+			local bufnr, test_file = helpers.create_test_buffer()
+
+			json_buffer({ { file = test_file, line = 1, summary = "visible now" } })
+			api.import_collection("review")
+
+			-- Back to the annotated file: the import drew into it while it was open.
+			vim.api.nvim_set_current_buf(bufnr)
+			local ns = require("haunt.display").get_namespace()
+			local marks = vim.api.nvim_buf_get_extmarks(bufnr, ns, 0, -1, {})
+			assert.is_true(#marks > 0, "imported bookmark left no extmarks in the open buffer")
+
+			helpers.cleanup_buffer(bufnr, test_file)
+		end)
+	end)
+
 	describe("store persistence safety", function()
 		local store
 

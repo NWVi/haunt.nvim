@@ -31,6 +31,7 @@ describe("haunt user commands", function()
 			"HauntCollections",
 			"HauntCollectionNew",
 			"HauntCollectionDelete",
+			"HauntCollectionImport",
 		}
 
 		for _, cmd in ipairs(expected_commands) do
@@ -283,6 +284,63 @@ describe("haunt user commands", function()
 			local matches = vim.fn.getcompletion("HauntCollectionDelete ", "cmdline")
 			assert.is_false(vim.tbl_contains(matches, "default"))
 			assert.is_true(vim.tbl_contains(matches, "review"))
+		end)
+	end)
+
+	describe("HauntCollectionImport", function()
+		local data_dir
+		local collections
+		local json_buf
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			collections = require("haunt.collections")
+			collections.invalidate()
+
+			json_buf = vim.api.nvim_create_buf(false, true)
+			local json = vim.json.encode({
+				{ file = "/tmp/a.lua", line = 3, summary = "a finding" },
+			})
+			vim.api.nvim_buf_set_lines(json_buf, 0, -1, false, vim.split(json, "\n"))
+			vim.api.nvim_set_current_buf(json_buf)
+		end)
+
+		after_each(function()
+			if json_buf and vim.api.nvim_buf_is_valid(json_buf) then
+				vim.api.nvim_buf_delete(json_buf, { force = true })
+			end
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		it("imports from the current buffer via %", function()
+			vim.cmd("HauntCollectionImport review %")
+
+			assert.is_true(collections.exists("review"))
+			assert.are.equal("review", collections.get_active())
+			assert.are.equal("a finding", require("haunt.api").get_bookmarks()[1].note)
+		end)
+
+		it("defaults to the current buffer when no source is given", function()
+			vim.cmd("HauntCollectionImport review")
+			assert.is_true(collections.exists("review"))
+		end)
+
+		it("imports from a file path", function()
+			local path = vim.fn.tempname() .. ".json"
+			vim.fn.writefile({ vim.json.encode({ { file = "/tmp/b.lua", line = 1, summary = "from file" } }) }, path)
+
+			vim.cmd("HauntCollectionImport review " .. path)
+
+			assert.are.equal("from file", require("haunt.api").get_bookmarks()[1].note)
+			vim.fn.delete(path)
+		end)
+
+		it("does not throw without arguments", function()
+			local ok = pcall(vim.cmd, "HauntCollectionImport")
+			-- nargs="+" makes Neovim itself reject the empty form
+			assert.is_false(ok)
 		end)
 	end)
 

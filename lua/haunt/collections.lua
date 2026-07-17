@@ -26,9 +26,11 @@
 ---   - `:HauntCollections` - Pick the active collection
 ---   - `:HauntCollectionNew [name]` - Create a collection and switch to it
 ---   - `:HauntCollectionDelete [name]` - Delete a collection and its bookmarks
+---   - `:HauntCollectionImport {name} [file|%]` - Create a collection from JSON
 ---
 --- See |haunt.switch_collection()|, |haunt.create_collection()|, and
---- |haunt.delete_collection()| for the programmatic API.
+--- |haunt.delete_collection()| for the programmatic API, and |haunt-import|
+--- for building a collection out of another tool's JSON output.
 
 --- Registry file contents. Written to `<data_dir>/collections.json`, and only
 --- ever written once the user creates, deletes, or switches a collection — a

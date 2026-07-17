@@ -18,6 +18,7 @@
 --- `:HauntCollections` - Open picker to switch the active bookmark collection
 --- `:HauntCollectionNew [name]` - Create a bookmark collection and switch to it
 --- `:HauntCollectionDelete [name]` - Delete a bookmark collection and its bookmarks
+--- `:HauntCollectionImport {name} [file|%]` - Create a collection from a JSON file or buffer
 --- `:HauntChangeDataDir [path]` - Change bookmark data directory (for project-specific bookmarks)
 --- `:HauntMigrate` - Migrate bookmarks from v1 to v2 storage (project-relative paths)
 --- `:HauntReload` - Reload bookmarks from disk (e.g. after switching branches externally)
@@ -90,6 +91,27 @@ end, { desc = "List all bookmarks" })
 vim.api.nvim_create_user_command("HauntCollections", function()
 	require("haunt.picker").show_collections()
 end, { desc = "Switch the active bookmark collection" })
+
+-- Special case for HauntCollectionImport: takes a name plus an optional source,
+-- so it can't use the single-argument command loop above.
+vim.api.nvim_create_user_command("HauntCollectionImport", function(opts)
+	local name, source = opts.fargs[1], opts.fargs[2]
+	if not name then
+		vim.notify("haunt.nvim: usage: :HauntCollectionImport <name> [file|%]", vim.log.levels.WARN)
+		return
+	end
+	require("haunt.api").import_collection(name, source)
+end, {
+	desc = "Create a bookmark collection from a JSON file or buffer",
+	nargs = "+",
+	-- Complete file paths for the source argument only; the name is freeform.
+	complete = function(arg_lead, cmd_line)
+		if #vim.split(vim.trim(cmd_line), "%s+") < 2 then
+			return {}
+		end
+		return vim.fn.getcompletion(arg_lead, "file")
+	end,
+})
 
 -- Special case for HauntMigrate (one-shot v1->v2 storage migration)
 vim.api.nvim_create_user_command("HauntMigrate", function()

@@ -31,6 +31,7 @@
 ---@field switch_collection fun(name: string): boolean
 ---@field create_collection fun(name?: string, opts?: CreateCollectionOpts): boolean
 ---@field delete_collection fun(name?: string): boolean
+---@field import_collection fun(name: string, source?: string, opts?: ImportOptions): boolean
 ---@field reload fun(reason?: ReloadReason): boolean
 ---@field refresh_above_annotations fun()
 ---@field _reset_for_testing fun()
@@ -954,6 +955,21 @@ function M.cleanup_buffer_tracking(bufnr)
 	restoration.cleanup_buffer_tracking(bufnr)
 end
 
+--- Re-render signs and annotations for every loaded buffer from the store.
+--- Bookmarks that arrived without a buffer open (a load from disk, an import)
+--- have no extmarks until this runs.
+---@private
+local function restore_visuals_in_loaded_buffers()
+	ensure_modules()
+	---@cast restoration -nil
+
+	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_loaded(bufnr) and vim.api.nvim_buf_is_valid(bufnr) then
+			restoration.restore_buffer_bookmarks(bufnr, _annotations_visible)
+		end
+	end
+end
+
 --- Refresh in-memory state from on-disk storage.
 ---
 --- Clears extmarks and signs from all loaded buffers, resets restoration
@@ -987,12 +1003,7 @@ function M.reload(reason)
 	-- Reset store and reload from new location
 	store.reload()
 
-	-- Restore visuals for all loaded buffers
-	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(bufnr) and vim.api.nvim_buf_is_valid(bufnr) then
-			restoration.restore_buffer_bookmarks(bufnr, _annotations_visible)
-		end
-	end
+	restore_visuals_in_loaded_buffers()
 
 	-- Re-target the branch watcher: the gitdir may have changed (cross-project
 	-- :cd, worktree switch). Within the same repo this is a cheap no-op since
@@ -1291,6 +1302,114 @@ function M.delete_collection(name)
 	end
 
 	vim.notify("haunt.nvim: deleted collection: " .. valid, vim.log.levels.INFO)
+	return true
+end
+
+--- Create a bookmark collection from a JSON array of findings.
+---
+--- Reads a JSON array — from the current buffer by default, or a file — and
+--- creates a new collection whose bookmarks are those entries, annotated with
+--- their `summary`. Intended for tool output: a code review, a linter run, a
+--- script. See |haunt-import| for the accepted shape.
+---
+--- Refuses when the collection already exists, so an import can never
+--- quietly rewrite bookmarks you already have. Delete it first to re-import.
+--- Switches to the new collection on success.
+---
+---@param name string Name for the new collection
+---@param source? string `"%"` or nil for the current buffer, otherwise a file path
+---@param opts? ImportOptions
+---@return boolean success True if the collection was created
+---
+---@usage >lua
+---   -- From the current buffer
+---   require('haunt.api').import_collection('review')
+---
+---   -- From a file, forcing the longer `failure_scenario` detail into annotations
+---   require('haunt.api').import_collection('review', '~/review.json', { detail = true })
+--- <
+function M.import_collection(name, source, opts)
+	ensure_modules()
+	---@cast store -nil
+	---@cast restoration -nil
+
+	local collections = require("haunt.collections")
+	local import = require("haunt.import")
+
+	local valid, name_err = collections.validate_name(name)
+	if not valid then
+		vim.notify("haunt.nvim: " .. name_err, vim.log.levels.WARN)
+		return false
+	end
+
+	-- Check before reading: no point parsing a file we can't import into, and
+	-- the user asked for this to refuse rather than merge or overwrite.
+	if collections.exists(valid) then
+		vim.notify(
+			"haunt.nvim: collection already exists: " .. valid .. " (delete it first to re-import)",
+			vim.log.levels.WARN
+		)
+		return false
+	end
+
+	local json_str, read_err = import.read_source(source)
+	if not json_str then
+		vim.notify("haunt.nvim: " .. read_err, vim.log.levels.ERROR)
+		return false
+	end
+
+	local bookmarks, stats = import.build_bookmarks(json_str, opts)
+	if not bookmarks then
+		vim.notify("haunt.nvim: " .. tostring(stats), vim.log.levels.ERROR)
+		return false
+	end
+	---@cast stats ImportStats
+
+	-- Don't leave an empty collection behind for an import that found nothing.
+	if stats.imported == 0 then
+		local reason = stats.skipped > 0 and string.format("no usable entries (%d malformed)", stats.skipped)
+			or "no entries to import"
+		vim.notify("haunt.nvim: " .. reason, vim.log.levels.WARN)
+		return false
+	end
+
+	local created, create_err = collections.create(valid)
+	if not created then
+		vim.notify("haunt.nvim: " .. create_err, vim.log.levels.WARN)
+		return false
+	end
+
+	-- Switch first: this saves the outgoing collection and leaves the store
+	-- loaded on the new (empty) one, so the imported bookmarks are added to the
+	-- right place and saved to the right file.
+	if not M.switch_collection(valid) then
+		return false
+	end
+
+	for _, bookmark in ipairs(bookmarks) do
+		store.add_bookmark(bookmark)
+	end
+
+	if not store.save() then
+		return false
+	end
+
+	-- The imported bookmarks have no extmarks yet; any buffer already open needs
+	-- its signs and annotations drawn now rather than on next load. The switch
+	-- above already marked those buffers restored, so clear that first or the
+	-- restore is a no-op.
+	restoration.reset_tracking()
+	restore_visuals_in_loaded_buffers()
+
+	local parts = { string.format("imported %d bookmarks into '%s'", stats.imported, valid) }
+	if stats.duplicates > 0 then
+		table.insert(parts, string.format("%d duplicate(s) skipped", stats.duplicates))
+	end
+	if stats.skipped > 0 then
+		table.insert(parts, string.format("%d malformed entr(y/ies) skipped", stats.skipped))
+	end
+	vim.notify("haunt.nvim: " .. table.concat(parts, ", "), vim.log.levels.INFO)
+
 	return true
 end
 

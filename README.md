@@ -271,6 +271,8 @@ Or you can use the user commands:
 
 `HauntCollectionDelete [name]`
 
+`HauntCollectionImport {name} [file|%]`
+
 `HauntChangeDataDir [path]`
 
 `HauntMigrate` 
@@ -413,6 +415,43 @@ A few things worth knowing:
   collection; nothing moves and nothing needs migrating.
 
 See `:h haunt-collections` for more.
+
+### Importing a collection from JSON
+
+Turn another tool's output — a code review, a linter, a script — into a
+collection of annotated bookmarks you can jump through:
+
+``` vim
+:HauntCollectionImport review %              " from the current buffer
+:HauntCollectionImport review ~/review.json  " from a file
+```
+
+The JSON is an array of `{file, line, summary}`:
+
+``` json
+[
+  {
+    "file": "source/Services/ReverseLookupService.cs",
+    "line": 45,
+    "summary": "Bucket key never matches the pre-seeded result key, so a genuine hit is silently dropped.",
+    "failure_scenario": "Caller sends Ips: [\"::ffff:1.2.3.4\"] ..."
+  }
+]
+```
+
+- `file` is absolute, or relative to the project root.
+- `summary` becomes the annotation (`note` works too).
+- `failure_scenario` is a whole paragraph, so it's only folded into the
+  annotation when `virt_text_pos = "above"` — that bordered box wraps
+  multi-line text, whereas at `eol` it would bury the line. Force it either way
+  with `require("haunt.api").import_collection("review", "%", { detail = true })`.
+- Unknown keys are ignored, so richer tool output imports as-is.
+
+Malformed entries are skipped rather than failing the whole import, and you're
+told how many. Importing into a name that already exists is refused — delete it
+first — so an import never quietly rewrites bookmarks you already have.
+
+See `:h haunt-import` for more.
 
 ## Persistence, Sharing, and Migration
 
