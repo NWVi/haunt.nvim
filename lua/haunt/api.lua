@@ -28,6 +28,9 @@
 ---@field yank_locations fun(opts?: SidekickOpts): boolean
 ---@field cleanup_buffer_tracking fun(bufnr: number)
 ---@field change_data_dir fun(new_dir: string|nil): boolean
+---@field switch_collection fun(name: string): boolean
+---@field create_collection fun(name?: string, opts?: CreateCollectionOpts): boolean
+---@field delete_collection fun(name?: string): boolean
 ---@field reload fun(reason?: ReloadReason): boolean
 ---@field refresh_above_annotations fun()
 ---@field _reset_for_testing fun()
@@ -1032,6 +1035,10 @@ function M.change_data_dir(new_dir)
 
 	store.save()
 	persistence.set_data_dir(new_dir)
+	-- The collections registry lives inside the data dir, so its cache is stale
+	-- the moment the dir changes; reloading before this would resolve the old
+	-- dir's active collection.
+	require("haunt.collections").invalidate()
 	local ok = M.reload("data_dir_change")
 
 	hooks.emit_data_dir_change({
@@ -1040,6 +1047,251 @@ function M.change_data_dir(new_dir)
 	})
 
 	return ok
+end
+
+--- Prompt for a collection name when one wasn't supplied programmatically.
+--- An empty response is a cancel, mirroring `annotate`.
+---@param name string|nil
+---@param prompt string
+---@return string|nil name nil when the user cancelled
+local function resolve_collection_name(name, prompt)
+	if name ~= nil then
+		return name
+	end
+
+	local input = vim.fn.input({ prompt = prompt })
+	if input == "" then
+		return nil
+	end
+	return input
+end
+
+--- Unlink a collection's storage file across every local branch.
+---
+--- The registry is per-project but storage files are per-branch, so deleting a
+--- collection has to remove the file each branch wrote. Filenames are opaque
+--- hashes and can't be enumerated from disk, but git can enumerate the branches
+--- that produced them. Best-effort: if git is unavailable or per-branch
+--- bookmarks are off, fall back to the single resolved path.
+---@param collection string
+local function delete_collection_files(collection)
+	local persistence_mod = require("haunt.persistence")
+	local project = require("haunt.project")
+	local config = require("haunt.config").get()
+	local info = project.get_info()
+
+	if not config.per_branch_bookmarks then
+		vim.fn.delete(persistence_mod._storage_path_for(info.project_id, nil, collection, false))
+		return
+	end
+
+	local branches = project.run_git("git for-each-ref --format=%(refname:short) refs/heads") or {}
+
+	local seen = {}
+	---@param branch string|nil nil is a real key (the default-branch key), not a no-op
+	local function unlink(branch)
+		local key = branch or "\0default"
+		if seen[key] then
+			return
+		end
+		seen[key] = true
+		-- An empty collection legitimately has no file, so a failed delete
+		-- ("not found") is success, not an error worth reporting.
+		vim.fn.delete(persistence_mod._storage_path_for(info.project_id, branch, collection, true))
+	end
+
+	for _, branch in ipairs(branches) do
+		if branch ~= "" then
+			unlink(branch)
+		end
+	end
+
+	-- `refs/heads` never contains a detached HEAD, and when git is unavailable
+	-- it yields nothing at all — but the store still wrote a file keyed by
+	-- whatever `info.branch` resolved to (nil included). Cover it explicitly, or
+	-- the file survives and resurrects when the name is recreated.
+	unlink(info.branch)
+end
+
+--- Switch the active collection.
+---
+--- Saves the current collection's bookmarks, then loads the target collection
+--- and restores its visuals. The choice persists across sessions until changed.
+---
+---@param name string The collection to switch to (must already exist)
+---@return boolean success True if the switch was successful
+---
+---@usage >lua
+---   require('haunt.api').switch_collection('review')
+--- <
+function M.switch_collection(name)
+	ensure_modules()
+	---@cast store -nil
+	---@cast hooks -nil
+
+	local collections = require("haunt.collections")
+
+	local valid, err = collections.validate_name(name)
+	if not valid then
+		vim.notify("haunt.nvim: " .. err, vim.log.levels.WARN)
+		return false
+	end
+
+	if not collections.exists(valid) then
+		vim.notify("haunt.nvim: no such collection: " .. valid, vim.log.levels.WARN)
+		return false
+	end
+
+	local old_collection = collections.get_active()
+	if valid == old_collection then
+		return true
+	end
+
+	-- Save to the OLD stamped path before the key source changes.
+	store.save()
+
+	-- Unlike set_data_dir, this performs I/O and can fail. Reloading after a
+	-- failed persist would leave memory showing a collection that disk doesn't
+	-- consider active.
+	local ok, set_err = collections.set_active(valid)
+	if not ok then
+		vim.notify("haunt.nvim: " .. set_err, vim.log.levels.ERROR)
+		return false
+	end
+
+	local reloaded = M.reload("collection_change")
+
+	hooks.emit_collection_change({
+		new_collection = valid,
+		old_collection = old_collection,
+	})
+
+	return reloaded
+end
+
+--- Options for `create_collection`.
+---@class CreateCollectionOpts
+---@field switch? boolean Switch to the new collection after creating it (default: true)
+
+--- Create a bookmark collection.
+---
+--- Prompts for a name when called without one. Switches to the new collection
+--- unless `opts.switch` is false.
+---
+---@param name? string The collection name; prompts when omitted
+---@param opts? CreateCollectionOpts
+---@return boolean success True if the collection was created
+---
+---@usage >lua
+---   require('haunt.api').create_collection('review')
+---   require('haunt.api').create_collection('review', { switch = false })
+--- <
+function M.create_collection(name, opts)
+	ensure_modules()
+
+	local collections = require("haunt.collections")
+	opts = opts or {}
+
+	local requested = resolve_collection_name(name, " Collection: ")
+	if requested == nil then
+		return false
+	end
+
+	local valid, err = collections.validate_name(requested)
+	if not valid then
+		vim.notify("haunt.nvim: " .. err, vim.log.levels.WARN)
+		return false
+	end
+
+	local ok, create_err = collections.create(valid)
+	if not ok then
+		vim.notify("haunt.nvim: " .. create_err, vim.log.levels.WARN)
+		return false
+	end
+
+	vim.notify("haunt.nvim: created collection: " .. valid, vim.log.levels.INFO)
+
+	if opts.switch == false then
+		return true
+	end
+
+	return M.switch_collection(valid)
+end
+
+--- Delete a bookmark collection and its bookmarks.
+---
+--- Prompts for a name when called without one, and asks for confirmation. The
+--- default collection cannot be deleted. Deleting the active collection falls
+--- back to the default collection.
+---
+---@param name? string The collection to delete; prompts when omitted
+---@return boolean success True if the collection was deleted
+---
+---@usage >lua
+---   require('haunt.api').delete_collection('review')
+--- <
+function M.delete_collection(name)
+	ensure_modules()
+	---@cast hooks -nil
+
+	local collections = require("haunt.collections")
+
+	local requested = resolve_collection_name(name, " Delete collection: ")
+	if requested == nil then
+		return false
+	end
+
+	local valid, err = collections.validate_name(requested)
+	if not valid then
+		vim.notify("haunt.nvim: " .. err, vim.log.levels.WARN)
+		return false
+	end
+
+	if valid == collections.DEFAULT then
+		vim.notify("haunt.nvim: cannot delete the default collection", vim.log.levels.WARN)
+		return false
+	end
+
+	if not collections.exists(valid) then
+		vim.notify("haunt.nvim: no such collection: " .. valid, vim.log.levels.WARN)
+		return false
+	end
+
+	local choice = vim.fn.confirm("Delete collection '" .. valid .. "' and its bookmarks?", "&Yes\n&No", 2)
+
+	-- no = 2, cancelled = 0
+	if choice ~= 1 then
+		vim.notify("haunt.nvim: Delete cancelled", vim.log.levels.INFO)
+		return false
+	end
+
+	local was_active = collections.get_active() == valid
+
+	-- Drop the registry entry before unlinking the bookmarks. `collections.delete`
+	-- does I/O and can fail; doing it first means a failed write leaves the
+	-- collection fully intact rather than listed-but-emptied. Nothing between
+	-- here and the unlink can trigger a save (it is all synchronous), and
+	-- deliberately no store.save() anywhere in this function — the in-memory
+	-- bookmarks belong to the collection being deleted, so saving would recreate
+	-- the very file we are about to remove.
+	local ok, delete_err = collections.delete(valid)
+	if not ok then
+		vim.notify("haunt.nvim: " .. delete_err, vim.log.levels.ERROR)
+		return false
+	end
+
+	delete_collection_files(valid)
+
+	if was_active then
+		M.reload("collection_change")
+		hooks.emit_collection_change({
+			new_collection = collections.DEFAULT,
+			old_collection = valid,
+		})
+	end
+
+	vim.notify("haunt.nvim: deleted collection: " .. valid, vim.log.levels.INFO)
+	return true
 end
 
 --- Reset internal state for testing purposes only

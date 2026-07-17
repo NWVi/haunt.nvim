@@ -10,6 +10,8 @@
 ---   - `<CR>`: Jump to the selected bookmark
 ---
 --- Note: Delete and edit annotation actions are not available in the fallback picker.
+--- The collections picker is likewise selection-only here; use
+--- `:HauntCollectionNew` and `:HauntCollectionDelete` instead.
 
 ---@type PickerModule
 ---@diagnostic disable-next-line: missing-fields
@@ -53,6 +55,31 @@ function M.show(_opts)
 			return
 		end
 		utils.jump_to_bookmark(choice)
+	end)
+
+	return true
+end
+
+--- Show the collections picker using vim.ui.select
+--- Selection only: create and delete are available via the user commands.
+---@param _opts? table Options (unused, for interface compliance)
+---@return boolean success Always returns true
+function M.show_collections(_opts)
+	local api = utils.get_api()
+	local collections = require("haunt.collections")
+
+	local items = utils.build_collection_items(collections.list(), collections.get_active())
+
+	vim.ui.select(items, {
+		prompt = "Collections",
+		format_item = function(item)
+			return item.label
+		end,
+	}, function(choice)
+		if not choice then
+			return
+		end
+		api.switch_collection(choice.name)
 	end)
 
 	return true

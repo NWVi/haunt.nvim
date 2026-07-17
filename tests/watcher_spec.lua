@@ -113,5 +113,42 @@ describe("haunt.watcher", function()
 			assert.is_true(ok, "_check_and_reload raised: " .. tostring(err))
 			assert.is_false(reload_called)
 		end)
+
+		-- The watcher decides whether to reload by comparing the freshly
+		-- resolved storage path against the store's stamp. Both sides now
+		-- include the active collection, so the comparison keeps working: same
+		-- collection on a new branch still resolves to a different path.
+		it("resolves a different path on a new branch while a non-default collection is active", function()
+			local data_dir = helpers.create_temp_data_dir()
+			local persistence = require("haunt.persistence")
+			persistence.set_data_dir(data_dir)
+
+			project_mock.set({ root = "/proj", branch = "main", project_id = "p-id" })
+
+			local collections = require("haunt.collections")
+			collections.invalidate()
+			collections.create("review")
+			collections.set_active("review")
+
+			local store = require("haunt.store")
+			store._reset_for_testing()
+			package.loaded["haunt.store"] = nil
+			store = require("haunt.store")
+			store.load()
+
+			local stamped = store.get_loaded_storage_path()
+			assert.is_string(stamped)
+
+			-- The stamp reflects the active collection, not the default one.
+			assert.are.equal(persistence.get_storage_path({ collection = "review" }), stamped)
+			assert.are_not.equal(persistence.get_storage_path({ collection = "default" }), stamped)
+
+			-- Same collection, different branch → the watcher sees a mismatch.
+			project_mock.set({ root = "/proj", branch = "feature", project_id = "p-id" })
+			assert.are_not.equal(stamped, persistence.get_storage_path())
+
+			persistence.set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
 	end)
 end)

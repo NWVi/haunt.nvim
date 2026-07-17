@@ -172,4 +172,84 @@ function M.show(opts)
 	return true
 end
 
+--- Show the fzf-lua collections picker
+---@param opts? table Options to pass to fzf-lua
+---@return boolean success True if picker was shown
+function M.show_collections(opts)
+	local ok, fzf = pcall(require, "fzf-lua")
+	if not ok then
+		return false
+	end
+
+	local api = utils.get_api()
+	local haunt = utils.get_haunt()
+	local collections = require("haunt.collections")
+
+	local cfg = haunt.get_config()
+	local picker_keys = cfg.picker_keys or {}
+
+	local items = utils.build_collection_items(collections.list(), collections.get_active())
+
+	-- Build display list and lookup table. Labels are unique because
+	-- collection names are unique within a project.
+	local display_list = {}
+	local lookup = {}
+
+	for _, item in ipairs(items) do
+		table.insert(display_list, item.label)
+		lookup[item.label] = item
+	end
+
+	local actions = {}
+
+	-- Default action: switch to the selected collection
+	actions["default"] = function(selected)
+		if not selected or #selected == 0 then
+			return
+		end
+		local item = lookup[selected[1]]
+		if item then
+			api.switch_collection(item.name)
+		end
+	end
+
+	if picker_keys.new_collection then
+		local key = picker_keys.new_collection.key or "n"
+		actions[key] = function()
+			utils.handle_new_collection({
+				close_picker = function() end,
+				reopen_picker = function()
+					M.show_collections(opts)
+				end,
+			})
+		end
+	end
+
+	if picker_keys.delete_collection then
+		local key = picker_keys.delete_collection.key or "d"
+		actions[key] = function(selected)
+			if not selected or #selected == 0 then
+				return
+			end
+			local item = lookup[selected[1]]
+			if not item then
+				return
+			end
+			-- The api notifies and returns false for the default collection.
+			if api.delete_collection(item.name) then
+				M.show_collections(opts)
+			end
+		end
+	end
+
+	local fzf_opts = {
+		prompt = "Collections> ",
+		actions = actions,
+	}
+	fzf_opts = vim.tbl_deep_extend("force", fzf_opts, opts or {})
+
+	fzf.fzf_exec(display_list, fzf_opts)
+	return true
+end
+
 return M

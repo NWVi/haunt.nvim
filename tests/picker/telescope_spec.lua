@@ -75,8 +75,225 @@ describe("haunt.picker.telescope", function()
 			assert.is_true(ok)
 		end)
 	end)
-end)
 
--- Integration tests with mock Telescope would require extensive mocking
--- of telescope.pickers, telescope.finders, telescope.config, etc.
--- These are better tested manually or with actual Telescope installed.
+	describe("show_collections()", function()
+		local data_dir
+		local collections
+		local mock
+		local original_confirm, original_input
+
+		--- Stand up just enough of Telescope's module graph to drive
+		--- show_collections: pickers.new(...):find(), finders.new_table,
+		--- config.values.generic_sorter, actions.select_default:replace, and
+		--- actions.state. Captures the picker config, the mapped keys, and any
+		--- finder handed to current_picker:refresh().
+		local function install_mock_telescope()
+			local m = {
+				picker_config = nil,
+				found = false,
+				mapped = {},
+				refreshed_with = nil,
+				closed = false,
+				selected = nil,
+			}
+
+			m.current_picker = {
+				refresh = function(_, finder)
+					m.refreshed_with = finder
+				end,
+			}
+
+			package.loaded["telescope"] = {}
+			package.loaded["telescope.pickers"] = {
+				new = function(_, config)
+					m.picker_config = config
+					return {
+						find = function()
+							m.found = true
+							-- Telescope calls attach_mappings with the prompt bufnr
+							-- and a mapper; run it so the spec can drive the actions.
+							if config.attach_mappings then
+								config.attach_mappings(1, function(mode, key, fn)
+									m.mapped[key] = { mode = mode, fn = fn }
+								end)
+							end
+						end,
+					}
+				end,
+			}
+			package.loaded["telescope.finders"] = {
+				new_table = function(opts)
+					return { _results = opts.results, _entry_maker = opts.entry_maker }
+				end,
+			}
+			package.loaded["telescope.config"] = {
+				values = {
+					generic_sorter = function()
+						return "sorter"
+					end,
+					grep_previewer = function()
+						return "previewer"
+					end,
+				},
+			}
+			package.loaded["telescope.actions"] = {
+				close = function()
+					m.closed = true
+				end,
+				select_default = {
+					replace = function(_, fn)
+						m.select_default = fn
+					end,
+				},
+			}
+			package.loaded["telescope.actions.state"] = {
+				get_selected_entry = function()
+					return m.selected
+				end,
+				get_current_picker = function()
+					return m.current_picker
+				end,
+			}
+
+			return m
+		end
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			collections = require("haunt.collections")
+			collections.invalidate()
+
+			original_confirm = vim.fn.confirm
+			vim.fn.confirm = function()
+				return 1
+			end
+			original_input = vim.fn.input
+
+			mock = install_mock_telescope()
+			telescope_picker = require("haunt.picker.telescope")
+		end)
+
+		after_each(function()
+			vim.fn.confirm = original_confirm
+			vim.fn.input = original_input
+			for _, name in ipairs({
+				"telescope",
+				"telescope.pickers",
+				"telescope.finders",
+				"telescope.config",
+				"telescope.actions",
+				"telescope.actions.state",
+			}) do
+				package.loaded[name] = nil
+			end
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		--- Resolve a collection into the entry shape Telescope hands to actions.
+		---@param name string
+		---@return table
+		local function entry_for(name)
+			for _, item in ipairs(mock.picker_config.finder._results) do
+				if item.name == name then
+					return { value = item }
+				end
+			end
+			error("no such collection in finder results: " .. name)
+		end
+
+		it("returns false when Telescope is not available", function()
+			package.loaded["telescope.pickers"] = nil
+			assert.is_false(telescope_picker.show_collections())
+		end)
+
+		it("opens a picker titled Collections", function()
+			assert.is_true(telescope_picker.show_collections())
+			assert.is_true(mock.found)
+			assert.are.equal("Collections", mock.picker_config.prompt_title)
+		end)
+
+		it("lists the default collection with no registry", function()
+			telescope_picker.show_collections()
+			local results = mock.picker_config.finder._results
+			assert.are.equal(1, #results)
+			assert.are.equal("default", results[1].name)
+		end)
+
+		it("builds entries with the name as ordinal", function()
+			collections.create("review")
+			telescope_picker.show_collections()
+
+			local maker = mock.picker_config.finder._entry_maker
+			local entry = maker(mock.picker_config.finder._results[2])
+			assert.are.equal("review", entry.ordinal)
+			assert.is_truthy(entry.display:match("review$"))
+		end)
+
+		it("switches on select and closes the picker", function()
+			collections.create("review")
+			telescope_picker.show_collections()
+
+			mock.selected = entry_for("review")
+			mock.select_default()
+
+			assert.is_true(mock.closed)
+			assert.are.equal("review", collections.get_active())
+		end)
+
+		it("handles select with no entry", function()
+			telescope_picker.show_collections()
+			mock.selected = nil
+			assert.is_true(pcall(mock.select_default))
+		end)
+
+		it("maps the configured create and delete keys", function()
+			telescope_picker.show_collections()
+			assert.is_not_nil(mock.mapped["n"])
+			assert.is_not_nil(mock.mapped["d"])
+		end)
+
+		it("deletes a collection and refreshes with a rebuilt finder", function()
+			collections.create("review")
+			telescope_picker.show_collections()
+
+			mock.selected = entry_for("review")
+			mock.mapped["d"].fn(1)
+
+			assert.is_false(collections.exists("review"))
+			assert.is_not_nil(mock.refreshed_with, "picker was not refreshed after delete")
+			-- The rebuilt finder must reflect the deletion, not the stale list.
+			assert.are.equal(1, #mock.refreshed_with._results)
+			assert.are.equal("default", mock.refreshed_with._results[1].name)
+		end)
+
+		-- The guard lives in the api; the backend just declines to refresh.
+		it("does not delete the default collection", function()
+			telescope_picker.show_collections()
+
+			mock.selected = entry_for("default")
+			mock.mapped["d"].fn(1)
+
+			assert.is_true(collections.exists("default"))
+			assert.is_nil(mock.refreshed_with)
+		end)
+
+		it("handles delete with no entry", function()
+			telescope_picker.show_collections()
+			mock.selected = nil
+			assert.is_true(pcall(mock.mapped["d"].fn, 1))
+		end)
+
+		it("creates a collection via the mapped key", function()
+			vim.fn.input = function()
+				return "fresh"
+			end
+
+			telescope_picker.show_collections()
+			mock.mapped["n"].fn(1)
+
+			assert.is_true(collections.exists("fresh"))
+		end)
+	end)
+end)

@@ -286,4 +286,84 @@ describe("haunt.picker", function()
 			assert.are.equal("Custom Title", mock_snacks.picker_config.title)
 		end)
 	end)
+
+	describe("show_collections()", function()
+		local data_dir
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			require("haunt.collections").invalidate()
+		end)
+
+		after_each(function()
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		it("uses snacks when picker is set to 'snacks'", function()
+			package.loaded["snacks"] = mock_snacks
+			haunt.setup({ picker = "snacks" })
+			picker = require("haunt.picker")
+
+			picker.show_collections()
+
+			assert.is_true(mock_snacks.picker_called)
+			assert.are.equal("Collections", mock_snacks.picker_config.title)
+		end)
+
+		it("uses fzf when picker is set to 'fzf'", function()
+			package.loaded["fzf-lua"] = mock_fzf
+			haunt.setup({ picker = "fzf" })
+			picker = require("haunt.picker")
+
+			picker.show_collections()
+
+			assert.is_true(mock_fzf.fzf_exec_called)
+		end)
+
+		it("warns when snacks is not available and picker is 'snacks'", function()
+			haunt.setup({ picker = "snacks" })
+			picker = require("haunt.picker")
+
+			picker.show_collections()
+
+			local has_warning = false
+			for _, notif in ipairs(notifications) do
+				if notif.msg:match("Snacks.nvim is not available") then
+					has_warning = true
+				end
+			end
+			assert.is_true(has_warning)
+		end)
+
+		it("falls back to vim.ui.select in auto mode when no picker available", function()
+			haunt.setup({ picker = "auto" })
+			picker = require("haunt.picker")
+
+			picker.show_collections()
+
+			assert.are.equal(1, #ui_select_calls)
+		end)
+
+		it("uses snacks first in auto mode when available", function()
+			package.loaded["snacks"] = mock_snacks
+			haunt.setup({ picker = "auto" })
+			picker = require("haunt.picker")
+
+			picker.show_collections()
+
+			assert.is_true(mock_snacks.picker_called)
+			assert.are.equal(0, #ui_select_calls)
+		end)
+
+		it("passes opts to underlying picker", function()
+			package.loaded["snacks"] = mock_snacks
+			picker = require("haunt.picker")
+
+			picker.show_collections({ title = "Custom Collections" })
+
+			assert.are.equal("Custom Collections", mock_snacks.picker_config.title)
+		end)
+	end)
 end)

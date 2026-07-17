@@ -35,6 +35,7 @@ function M.reset_modules()
 	package.loaded["haunt.api"] = nil
 	package.loaded["haunt.display"] = nil
 	package.loaded["haunt.persistence"] = nil
+	package.loaded["haunt.collections"] = nil
 	package.loaded["haunt.config"] = nil
 	package.loaded["haunt.store"] = nil
 	package.loaded["haunt.utils"] = nil
@@ -343,6 +344,37 @@ function M.create_bookmarks_file(data_dir, bookmarks, storage_hash)
 	local json_str = vim.json.encode(data)
 	vim.fn.writefile({ json_str }, filepath)
 	return filepath
+end
+
+--- Create a collections registry file in a data directory.
+---@param data_dir string The data directory path
+---@param projects table<string, {collections: string[], active: string}> Registry entries keyed by project_id
+---@param version? number Registry version (defaults to the current version)
+---@return string filepath The path to the created JSON file
+function M.create_registry_file(data_dir, projects, version)
+	local filepath = data_dir .. "collections.json"
+	local data = {
+		version = version or 1,
+		projects = projects,
+	}
+	vim.fn.writefile({ vim.json.encode(data) }, filepath)
+	return filepath
+end
+
+--- Read and decode a collections registry file.
+---@param data_dir string The data directory path
+---@return table|nil data The decoded registry, or nil when absent/undecodable
+function M.read_registry_file(data_dir)
+	local filepath = data_dir .. "collections.json"
+	if vim.fn.filereadable(filepath) ~= 1 then
+		return nil
+	end
+
+	local ok, data = pcall(vim.json.decode, table.concat(vim.fn.readfile(filepath), "\n"))
+	if not ok then
+		return nil
+	end
+	return data
 end
 
 --- Create a v1 bookmarks JSON file in a data directory.

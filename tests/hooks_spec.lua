@@ -845,4 +845,48 @@ describe("haunt.hooks", function()
 			assert.are.equal(1, call_count)
 		end)
 	end)
+
+	describe("onCollectionChange", function()
+		it("calls registered handlers when emit_collection_change fires", function()
+			local received_ctx = nil
+			hooks.on_collection_change(function(ctx)
+				received_ctx = ctx
+			end)
+
+			hooks.emit_collection_change({
+				new_collection = "review",
+				old_collection = "default",
+			})
+
+			assert.is_not_nil(received_ctx)
+			assert.are.equal("review", received_ctx.new_collection)
+			assert.are.equal("default", received_ctx.old_collection)
+		end)
+
+		it("supports one-shot handlers via once_collection_change", function()
+			local call_count = 0
+			hooks.once_collection_change(function()
+				call_count = call_count + 1
+			end)
+
+			hooks.emit_collection_change({ new_collection = "a", old_collection = "default" })
+			hooks.emit_collection_change({ new_collection = "b", old_collection = "a" })
+
+			assert.are.equal(1, call_count)
+		end)
+
+		it("supports unregistering via off_collection_change", function()
+			local call_count = 0
+			local fn = function()
+				call_count = call_count + 1
+			end
+
+			hooks.on_collection_change(fn)
+			hooks.emit_collection_change({ new_collection = "a", old_collection = "default" })
+			hooks.off_collection_change(fn)
+			hooks.emit_collection_change({ new_collection = "b", old_collection = "a" })
+
+			assert.are.equal(1, call_count)
+		end)
+	end)
 end)

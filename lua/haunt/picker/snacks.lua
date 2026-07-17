@@ -185,4 +185,116 @@ function M.show(opts)
 	return true
 end
 
+---@private
+---@param picker snacks.Picker The Snacks picker instance
+---@param item CollectionItem The selected collection item
+local function handle_delete_collection(picker, item)
+	if not item then
+		return
+	end
+
+	local api = utils.get_api()
+
+	-- The "cannot delete default" guard lives in the api, which notifies and
+	-- returns false; nothing to do here but leave the list as it was.
+	if not api.delete_collection(item.name) then
+		return
+	end
+
+	picker:refresh()
+end
+
+---@private
+---@param picker snacks.Picker The Snacks picker instance
+local function handle_new_collection(picker)
+	utils.handle_new_collection({
+		close_picker = function()
+			picker:close()
+		end,
+		reopen_picker = function()
+			if picker_module then
+				picker_module.show_collections()
+			end
+		end,
+	})
+end
+
+--- Show the Snacks.nvim collections picker
+---@param opts? table Options to pass to Snacks.picker (see snacks.picker.Config)
+---@return boolean success True if picker was shown
+function M.show_collections(opts)
+	local ok, Snacks = pcall(require, "snacks")
+	if not ok then
+		return false
+	end
+
+	local api = utils.get_api()
+	local haunt = utils.get_haunt()
+	local collections = require("haunt.collections")
+
+	local cfg = haunt.get_config()
+	local picker_keys = cfg.picker_keys or {}
+
+	local input_keys = {}
+	local list_keys = {}
+
+	if picker_keys.new_collection then
+		local key = picker_keys.new_collection.key or "n"
+		local mode = picker_keys.new_collection.mode or { "n" }
+		input_keys[key] = { "new_collection", mode = mode }
+		list_keys[key] = { "new_collection", mode = mode }
+	end
+
+	if picker_keys.delete_collection then
+		local key = picker_keys.delete_collection.key or "d"
+		local mode = picker_keys.delete_collection.mode or { "n" }
+		input_keys[key] = { "delete_collection", mode = mode }
+		list_keys[key] = { "delete_collection", mode = mode }
+	end
+
+	---@type snacks.picker.Config
+	local picker_opts = {
+		title = "Collections",
+		-- Use a finder function so picker:refresh() works correctly
+		finder = function()
+			return utils.build_collection_items(collections.list(), collections.get_active())
+		end,
+		format = function(item, _)
+			local result = {}
+
+			if item.active then
+				result[#result + 1] = { "● ", "SnacksPickerMatch" }
+				result[#result + 1] = { item.name, "SnacksPickerMatch" }
+			else
+				result[#result + 1] = { "  ", "SnacksPickerComment" }
+				result[#result + 1] = { item.name, "SnacksPickerFile" }
+			end
+
+			return result
+		end,
+		confirm = function(picker, item)
+			if not item then
+				return
+			end
+			picker:close()
+			api.switch_collection(item.name)
+		end,
+		actions = {
+			new_collection = handle_new_collection,
+			delete_collection = handle_delete_collection,
+		},
+		win = {
+			input = {
+				keys = input_keys,
+			},
+			list = {
+				keys = list_keys,
+			},
+		},
+	}
+	picker_opts = vim.tbl_deep_extend("force", picker_opts, opts or {})
+	Snacks.picker(picker_opts)
+	return true
+end
+
 return M

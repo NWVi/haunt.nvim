@@ -405,8 +405,26 @@ end
 --- cache's current values), so a `:cd` into a different project doesn't
 --- redirect saves mid-flight.
 ---
+--- No-ops for a store that has neither loaded nor been written to. Such a store
+--- is empty because it has never read disk, not because the user has no
+--- bookmarks — and an empty save *deletes* the storage file (see
+--- `persistence.save_bookmarks`). Without this, any save-then-switch caller
+--- (`change_data_dir`, `switch_collection`, the `:cd` handler, the
+--- `VimLeavePre` autosave) would destroy the stored bookmarks of a session that
+--- never happened to load them.
+---
+--- Both halves of the condition matter. `_loaded` alone is not enough: `load()`
+--- leaves it false when the file is corrupt or still v1, and bookmarks made
+--- after that failure must still reach disk (writing valid v2 repairs the
+--- file). `#bookmarks == 0` alone is not enough either: a loaded store that the
+--- user emptied *should* delete the file.
+---
 ---@return boolean success True if save succeeded
 function M.save()
+	if not _loaded and #bookmarks == 0 then
+		return true
+	end
+
 	ensure_persistence()
 	ensure_hooks()
 	---@cast persistence -nil

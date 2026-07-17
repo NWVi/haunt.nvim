@@ -149,4 +149,78 @@ describe("haunt.picker.fallback", function()
 			assert.is_true(ok)
 		end)
 	end)
+
+	describe("show_collections()", function()
+		local data_dir
+		local collections
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			collections = require("haunt.collections")
+			collections.invalidate()
+		end)
+
+		after_each(function()
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		it("returns true (always available)", function()
+			assert.is_true(fallback.show_collections())
+		end)
+
+		it("lists the default collection even with no registry", function()
+			fallback.show_collections()
+
+			assert.are.equal(1, #ui_select_calls)
+			local items = ui_select_calls[1].items
+			assert.are.equal(1, #items)
+			assert.are.equal("default", items[1].name)
+		end)
+
+		it("marks the active collection", function()
+			collections.create("review")
+			collections.set_active("review")
+
+			fallback.show_collections()
+
+			local items = ui_select_calls[1].items
+			local by_name = {}
+			for _, item in ipairs(items) do
+				by_name[item.name] = item
+			end
+
+			assert.is_true(by_name["review"].active)
+			assert.is_false(by_name["default"].active)
+			assert.is_truthy(by_name["review"].label:match("●"))
+		end)
+
+		it("switches to the chosen collection", function()
+			collections.create("review")
+			assert.are.equal("default", collections.get_active())
+
+			fallback.show_collections()
+
+			local call = ui_select_calls[1]
+			local chosen
+			for _, item in ipairs(call.items) do
+				if item.name == "review" then
+					chosen = item
+				end
+			end
+
+			call.on_choice(chosen)
+
+			assert.are.equal("review", collections.get_active())
+		end)
+
+		it("handles nil choice gracefully", function()
+			fallback.show_collections()
+
+			local ok = pcall(ui_select_calls[1].on_choice, nil)
+			assert.is_true(ok)
+			assert.are.equal("default", collections.get_active())
+		end)
+	end)
 end)

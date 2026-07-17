@@ -13,6 +13,11 @@
 --- `:HauntList` - Open interactive picker to browse all bookmarks
 --- `:HauntClear` - Clear all bookmarks in current buffer
 --- `:HauntClearAll` - Clear all bookmarks across all files
+--- `:HauntQf` - Send buffer annotations to the quickfix list
+--- `:HauntQfAll` - Send all annotations to the quickfix list
+--- `:HauntCollections` - Open picker to switch the active bookmark collection
+--- `:HauntCollectionNew [name]` - Create a bookmark collection and switch to it
+--- `:HauntCollectionDelete [name]` - Delete a bookmark collection and its bookmarks
 --- `:HauntChangeDataDir [path]` - Change bookmark data directory (for project-specific bookmarks)
 --- `:HauntMigrate` - Migrate bookmarks from v1 to v2 storage (project-relative paths)
 --- `:HauntReload` - Reload bookmarks from disk (e.g. after switching branches externally)
@@ -32,6 +37,7 @@ vim.g.loaded_haunt = 1
 ---@field desc string
 ---@field has_args? boolean
 ---@field args? table
+---@field complete? fun(): string[]
 
 ---@type table<string, HauntCommandInfo>
 local commands = {
@@ -46,6 +52,21 @@ local commands = {
 	HauntQfAll = { fn = "to_quickfix", desc = "Send All Annotations to Quickfix List" },
 	HauntChangeDataDir = { fn = "change_data_dir", desc = "Change bookmark data directory", has_args = true },
 	HauntReload = { fn = "reload", desc = "Reload bookmarks from disk" },
+	HauntCollectionNew = { fn = "create_collection", desc = "Create a bookmark collection", has_args = true },
+	HauntCollectionDelete = {
+		fn = "delete_collection",
+		desc = "Delete a bookmark collection",
+		has_args = true,
+		-- A Lua `complete` has customlist semantics: Neovim does not filter the
+		-- returned list against what was typed, so do it here. The default
+		-- collection is omitted because the command refuses to delete it.
+		complete = function(arg_lead)
+			local collections = require("haunt.collections")
+			return vim.tbl_filter(function(name)
+				return name ~= collections.DEFAULT and vim.startswith(name, arg_lead)
+			end, collections.list())
+		end,
+	},
 }
 
 for name, info in pairs(commands) do
@@ -57,13 +78,18 @@ for name, info in pairs(commands) do
 		else
 			require("haunt.api")[info.fn]()
 		end
-	end, { desc = info.desc, nargs = info.has_args and "?" or 0 })
+	end, { desc = info.desc, nargs = info.has_args and "?" or 0, complete = info.complete })
 end
 
 -- Special case for HauntList (uses picker)
 vim.api.nvim_create_user_command("HauntList", function()
 	require("haunt.picker").show()
 end, { desc = "List all bookmarks" })
+
+-- Special case for HauntCollections (uses picker)
+vim.api.nvim_create_user_command("HauntCollections", function()
+	require("haunt.picker").show_collections()
+end, { desc = "Switch the active bookmark collection" })
 
 -- Special case for HauntMigrate (one-shot v1->v2 storage migration)
 vim.api.nvim_create_user_command("HauntMigrate", function()

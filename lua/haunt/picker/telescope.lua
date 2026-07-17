@@ -241,4 +241,116 @@ function M.show(opts)
 	return true
 end
 
+--- Show the Telescope collections picker
+---@param opts? table Options to pass to Telescope
+---@return boolean success True if picker was shown
+function M.show_collections(opts)
+	local ok, pickers = pcall(require, "telescope.pickers")
+	if not ok then
+		return false
+	end
+
+	local finders = require("telescope.finders")
+	local conf = require("telescope.config").values
+	local actions = require("telescope.actions")
+	local action_state = require("telescope.actions.state")
+
+	local api = utils.get_api()
+	local haunt = utils.get_haunt()
+	local collections = require("haunt.collections")
+
+	local cfg = haunt.get_config()
+	local picker_keys = cfg.picker_keys or {}
+
+	---@param item CollectionItem
+	---@return table entry
+	local function entry_maker(item)
+		return {
+			value = item,
+			display = item.label,
+			ordinal = item.name,
+		}
+	end
+
+	---@return table finder
+	local function collection_finder()
+		return finders.new_table({
+			results = utils.build_collection_items(collections.list(), collections.get_active()),
+			entry_maker = entry_maker,
+		})
+	end
+
+	---@param prompt_bufnr number Telescope prompt buffer number
+	local function telescope_delete_collection(prompt_bufnr)
+		local selection = action_state.get_selected_entry()
+		if not selection then
+			return
+		end
+
+		-- The api notifies and returns false for the default collection.
+		if not api.delete_collection(selection.value.name) then
+			return
+		end
+
+		local current_picker = action_state.get_current_picker(prompt_bufnr)
+		current_picker:refresh(collection_finder(), { reset_prompt = false })
+	end
+
+	---@param prompt_bufnr number Telescope prompt buffer number
+	local function telescope_new_collection(prompt_bufnr)
+		utils.handle_new_collection({
+			close_picker = function()
+				actions.close(prompt_bufnr)
+			end,
+			reopen_picker = function()
+				if picker_module then
+					picker_module.show_collections()
+				end
+			end,
+		})
+	end
+
+	---@param prompt_bufnr number Telescope prompt buffer number
+	---@param map fun(mode: string, key: string, action: function) Telescope key mapper
+	---@return boolean
+	local function attach_mappings(prompt_bufnr, map)
+		actions.select_default:replace(function()
+			local selection = action_state.get_selected_entry()
+			if not selection then
+				return
+			end
+			actions.close(prompt_bufnr)
+			api.switch_collection(selection.value.name)
+		end)
+
+		if picker_keys.new_collection then
+			local key = picker_keys.new_collection.key or "n"
+			local modes = picker_keys.new_collection.mode or { "n" }
+			for _, mode in ipairs(modes) do
+				map(mode, key, telescope_new_collection)
+			end
+		end
+
+		if picker_keys.delete_collection then
+			local key = picker_keys.delete_collection.key or "d"
+			local modes = picker_keys.delete_collection.mode or { "n" }
+			for _, mode in ipairs(modes) do
+				map(mode, key, telescope_delete_collection)
+			end
+		end
+
+		return true
+	end
+
+	local picker_opts = vim.tbl_deep_extend("force", {
+		prompt_title = "Collections",
+		finder = collection_finder(),
+		sorter = conf.generic_sorter({}),
+		attach_mappings = attach_mappings,
+	}, opts or {})
+
+	pickers.new({}, picker_opts):find()
+	return true
+end
+
 return M

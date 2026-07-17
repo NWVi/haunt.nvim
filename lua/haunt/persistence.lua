@@ -20,10 +20,13 @@
 ---@field annotation_extmark_id number|nil Extmark ID for annotation display (internal)
 
 ---@class PersistenceModule
+---@field DEFAULT_COLLECTION string
 ---@field set_data_dir fun(dir: string|nil)
 ---@field ensure_data_dir fun(): string|nil, string|nil
+---@field get_data_dir fun(): string
 ---@field get_git_info fun(): {root: string|nil, branch: string|nil}
----@field get_storage_path fun(): string
+---@field get_storage_path fun(opts?: {collection?: string}): string
+---@field _storage_path_for fun(project_id: string, branch: string|nil, collection: string|nil, per_branch: boolean|nil): string
 ---@field _get_v1_storage_path fun(repo_root: string, branch: string|nil, per_branch: boolean|nil): string
 ---@field save_bookmarks fun(bookmarks: Bookmark[], filepath?: string, project_root?: string|nil): boolean
 ---@field load_bookmarks fun(filepath?: string): Bookmark[]|nil
@@ -38,6 +41,11 @@ local M = {}
 
 local STORAGE_VERSION = 2
 local DEFAULT_BRANCH_KEY = "__default__"
+
+--- The collection that has always existed: everything bookmarked before
+--- collections were introduced belongs to it.
+local DEFAULT_COLLECTION = "default"
+M.DEFAULT_COLLECTION = DEFAULT_COLLECTION
 
 ---@private
 ---@type string|nil
@@ -70,11 +78,16 @@ function M.set_data_dir(dir)
 	custom_data_dir = expanded
 end
 
+--- Resolve the data directory without touching the filesystem. Kept free of
+--- the `mkdir` in `ensure_data_dir` because `haunt.collections` calls this on
+--- every storage-path resolution, which is every save and load.
 ---@return string data_dir The haunt data directory path
-local function get_data_dir()
+function M.get_data_dir()
 	local config = require("haunt.config")
 	return custom_data_dir or config.DEFAULT_DATA_DIR
 end
+
+local get_data_dir = M.get_data_dir
 
 --- Ensures the haunt data directory exists
 ---@return string data_dir The haunt data directory path
@@ -90,22 +103,60 @@ local function path_for_key(key)
 	return get_data_dir() .. vim.fn.sha256(key):sub(1, 12) .. ".json"
 end
 
---- Generates a storage path for the current project and branch.
---- Uses a 12-character SHA256 hash of "project_id|branch" (or just "project_id"
---- when per_branch_bookmarks is disabled). project_id is a stable identifier
---- (root commit hash, repo path, or cwd) supplied by haunt.project, so
---- forks/clones of the same project produce the same storage file.
+--- Build a storage key from its parts.
+---
+--- The default collection contributes nothing to the key, so bookmarks written
+--- before collections existed keep hashing to the same filename. Non-default
+--- collections are tagged with a "^" sigil, which git forbids in refnames
+--- (git-check-ref-format(1) rule 4), so a branch segment can never be mistaken
+--- for a collection segment.
+---@param project_id string
+---@param branch string|nil
+---@param collection string|nil Defaults to the default collection
+---@param per_branch boolean|nil Whether to include the branch segment
+---@return string key
+local function build_key(project_id, branch, collection, per_branch)
+	local key = project_id
+	if per_branch then
+		key = key .. "|" .. (branch or DEFAULT_BRANCH_KEY)
+	end
+
+	collection = collection or DEFAULT_COLLECTION
+	if collection ~= DEFAULT_COLLECTION then
+		key = key .. "|^" .. collection
+	end
+
+	return key
+end
+
+--- Generates a storage path for the current project, branch, and collection.
+--- Uses a 12-character SHA256 hash of the storage key. project_id is a stable
+--- identifier (root commit hash, repo path, or cwd) supplied by haunt.project,
+--- so forks/clones of the same project produce the same storage file.
+---@param opts? {collection?: string} Pin a specific collection instead of the active one
 ---@return string path The full path to the storage file
-function M.get_storage_path()
+function M.get_storage_path(opts)
 	local config = require("haunt.config").get()
 	local info = require("haunt.project").get_info()
 
-	local key = info.project_id
-	if config.per_branch_bookmarks then
-		key = key .. "|" .. (info.branch or DEFAULT_BRANCH_KEY)
+	local collection = opts and opts.collection
+	if not collection then
+		collection = require("haunt.collections").get_active()
 	end
 
-	return path_for_key(key)
+	return path_for_key(build_key(info.project_id, info.branch, collection, config.per_branch_bookmarks))
+end
+
+--- Compute a storage path from explicit parts, bypassing the active collection
+--- and the project cache. Used by `haunt.api` to unlink a collection's file on
+--- every branch when the collection is deleted.
+---@param project_id string Stable project identifier
+---@param branch string|nil Branch name (nil falls back to the default-branch key)
+---@param collection string|nil Collection name (nil means the default collection)
+---@param per_branch boolean|nil Whether per-branch bookmarks are enabled
+---@return string path
+function M._storage_path_for(project_id, branch, collection, per_branch)
+	return path_for_key(build_key(project_id, branch, collection, per_branch))
 end
 
 --- Compute the legacy v1 storage path for a project keyed by repo path.

@@ -406,4 +406,147 @@ describe("haunt.picker.snacks", function()
 			assert.is_true(ok)
 		end)
 	end)
+
+	describe("show_collections()", function()
+		local data_dir
+		local collections
+		local original_confirm
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			collections = require("haunt.collections")
+			collections.invalidate()
+
+			original_confirm = vim.fn.confirm
+			vim.fn.confirm = function()
+				return 1
+			end
+		end)
+
+		after_each(function()
+			vim.fn.confirm = original_confirm
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		it("returns true when Snacks is available", function()
+			assert.is_true(snacks_picker.show_collections())
+			assert.is_true(mock_snacks.picker_called)
+		end)
+
+		it("returns false when Snacks is unavailable", function()
+			package.loaded["snacks"] = nil
+			assert.is_false(snacks_picker.show_collections())
+		end)
+
+		it("titles the picker Collections", function()
+			snacks_picker.show_collections()
+			assert.are.equal("Collections", mock_snacks.picker_config.title)
+		end)
+
+		it("finds the default collection with no registry", function()
+			snacks_picker.show_collections()
+			local items = execute_finder(mock_snacks.picker_config)
+
+			assert.are.equal(1, #items)
+			assert.are.equal("default", items[1].name)
+			assert.is_true(items[1].active)
+		end)
+
+		it("finds created collections", function()
+			collections.create("review")
+			snacks_picker.show_collections()
+			local items = execute_finder(mock_snacks.picker_config)
+
+			assert.are.equal(2, #items)
+		end)
+
+		it("switches on confirm and closes the picker", function()
+			collections.create("review")
+			snacks_picker.show_collections()
+			local items = execute_finder(mock_snacks.picker_config)
+
+			local review
+			for _, item in ipairs(items) do
+				if item.name == "review" then
+					review = item
+				end
+			end
+
+			execute_confirm(mock_snacks.picker_config, review)
+
+			assert.is_true(mock_snacks.picker_instance.closed)
+			assert.are.equal("review", collections.get_active())
+		end)
+
+		it("handles a nil item on confirm", function()
+			snacks_picker.show_collections()
+			local ok = pcall(execute_confirm, mock_snacks.picker_config, nil)
+			assert.is_true(ok)
+		end)
+
+		it("deletes a collection and refreshes", function()
+			collections.create("review")
+			snacks_picker.show_collections()
+			local items = execute_finder(mock_snacks.picker_config)
+
+			local review
+			for _, item in ipairs(items) do
+				if item.name == "review" then
+					review = item
+				end
+			end
+
+			execute_action(mock_snacks.picker_config, "delete_collection", review)
+
+			assert.is_false(collections.exists("review"))
+			assert.is_true(mock_snacks.picker_instance.refreshed)
+		end)
+
+		-- The guard lives in the api; the backend just declines to refresh.
+		it("does not delete the default collection", function()
+			snacks_picker.show_collections()
+			local items = execute_finder(mock_snacks.picker_config)
+
+			execute_action(mock_snacks.picker_config, "delete_collection", items[1])
+
+			assert.is_true(collections.exists("default"))
+			assert.is_false(mock_snacks.picker_instance.refreshed)
+		end)
+
+		it("handles a nil item on delete", function()
+			snacks_picker.show_collections()
+			local ok = pcall(execute_action, mock_snacks.picker_config, "delete_collection", nil)
+			assert.is_true(ok)
+		end)
+
+		it("binds the configured keys", function()
+			snacks_picker.show_collections()
+			local keys = mock_snacks.picker_config.win.input.keys
+
+			assert.is_not_nil(keys["n"])
+			assert.are.equal("new_collection", keys["n"][1])
+			assert.is_not_nil(keys["d"])
+			assert.are.equal("delete_collection", keys["d"][1])
+		end)
+
+		it("omits an action whose key config is disabled", function()
+			haunt.setup({ picker_keys = { new_collection = false } })
+			snacks_picker.show_collections()
+
+			assert.is_nil(mock_snacks.picker_config.win.input.keys["n"])
+		end)
+
+		it("creates a collection via the new_collection action", function()
+			vim.fn.input = function()
+				return "fresh"
+			end
+
+			snacks_picker.show_collections()
+			execute_action(mock_snacks.picker_config, "new_collection", nil)
+
+			assert.is_true(collections.exists("fresh"))
+		end)
+	end)
 end)

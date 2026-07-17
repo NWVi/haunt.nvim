@@ -62,6 +62,7 @@ Keep your mental overhead to a minimum and never repeatedly rummage through your
 - Git integration
   * annotations are tied to a git branch. Keep different notes for different branches
 - Jump around using your hauntings
+- Organize bookmarks into collections — a separate list per refactor, bug hunt, or review
 - Search through your bookmarks with `snacks.nvim` or `telescope.nvim`
 - Use `sidekick.nvim` to send your annotations to your favorite cli tool. Have a robot purge you of your hauntings!
 - Populate the quickfix list with your bookmarks when you want a simple jump list
@@ -264,6 +265,12 @@ Or you can use the user commands:
 
 `HauntQfAll`
 
+`HauntCollections`
+
+`HauntCollectionNew [name]`
+
+`HauntCollectionDelete [name]`
+
 `HauntChangeDataDir [path]`
 
 `HauntMigrate` 
@@ -304,15 +311,32 @@ return {
         key = "a",
         mode = { "n" },
       },
+      -- Collections picker (:HauntCollections)
+      new_collection = {
+        key = "n",
+        mode = { "n" },
+      },
+      delete_collection = {
+        key = "d",
+        mode = { "n" },
+      },
     },
   },
 }
 ```
 
-**Picker actions:**
+**Bookmark picker actions (`:HauntList`):**
 - `<CR>`: Jump to the selected bookmark
 - `d` (normal mode): Delete the selected bookmark
 - `a` (normal mode): Edit the bookmark's annotation
+
+**Collections picker actions (`:HauntCollections`):**
+- `<CR>`: Switch to the selected collection
+- `n` (normal mode): Create a new collection
+- `d` (normal mode): Delete the selected collection
+
+Set an action to `nil` to disable it. The `vim.ui.select` fallback supports
+selection only.
 </details>
 
 ### `sidekick.nvim`
@@ -348,10 +372,52 @@ return {
 
 </details>
 
+## Collections
+
+Collections are named bookmark lists. Every project starts with a single
+`default` collection — the bookmarks haunt has always kept — and you can create
+more to keep separate concerns apart: a refactor, a bug hunt, a review pass.
+
+Only one collection is active at a time. Everything haunt does — annotations,
+navigation, quickfix, sidekick — operates on the active collection, and your
+choice persists across sessions until you change it.
+
+``` vim
+:HauntCollections            " pick the active collection
+:HauntCollectionNew review   " create one and switch to it
+:HauntCollectionDelete review
+```
+
+``` lua
+require("haunt.api").switch_collection("review")
+require("haunt.api").create_collection("review", { switch = false })
+require("haunt.api").delete_collection("review")
+```
+
+In the collections picker, `<CR>` switches, `n` creates, and `d` deletes (see
+[picker keys](#picker-snacksnvim--telescopenvim--fzf-lua)). The `vim.ui.select`
+fallback supports selection only — use the commands above to create and delete.
+
+A few things worth knowing:
+
+- **`default` is reserved.** It always exists and cannot be deleted. If you
+  delete the collection you're currently on, you land back on `default`.
+- **Collections are per project.** A collection named `review` in one project is
+  unrelated to `review` in another.
+- **Collections are orthogonal to branches.** With `per_branch_bookmarks` on
+  (the default), a collection still keeps separate bookmarks per branch — a
+  branch is *which code you're on*, a collection is *which lens you're using*.
+  Switching branches keeps your active collection.
+- **Deleting a collection deletes its bookmarks**, on every branch. It asks first.
+- **Upgrading is a no-op.** Your existing bookmarks are already the `default`
+  collection; nothing moves and nothing needs migrating.
+
+See `:h haunt-collections` for more.
+
 ## Persistence, Sharing, and Migration
 
-Bookmarks are saved as one JSON file per project, per branch, keyed by your
-git root commit, with project-relative paths inside.
+Bookmarks are saved as one JSON file per project, per branch, per collection,
+keyed by your git root commit, with project-relative paths inside.
 This makes the file portable across machines, forks, and checkouts.
 
 Here are some ideas for how to use this for inspiration:

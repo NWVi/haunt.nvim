@@ -1,4 +1,4 @@
----@alias HauntEvent "on_create"|"on_delete"|"on_update"|"on_navigation"|"on_toggle"|"on_toggle_all"|"on_pre_save"|"on_post_save"|"on_load"|"on_restore"|"on_clear"|"on_clear_all"|"on_data_dir_change"|"on_reload"|"on_branch_change"
+---@alias HauntEvent "on_create"|"on_delete"|"on_update"|"on_navigation"|"on_toggle"|"on_toggle_all"|"on_pre_save"|"on_post_save"|"on_load"|"on_restore"|"on_clear"|"on_clear_all"|"on_data_dir_change"|"on_reload"|"on_branch_change"|"on_collection_change"
 
 ---@class HauntEvents
 ---@field on_create "on_create"
@@ -16,6 +16,7 @@
 ---@field on_data_dir_change "on_data_dir_change"
 ---@field on_reload "on_reload"
 ---@field on_branch_change "on_branch_change"
+---@field on_collection_change "on_collection_change"
 
 ---@type HauntEvents
 local M = {
@@ -34,6 +35,7 @@ local M = {
 	on_data_dir_change = "on_data_dir_change",
 	on_reload = "on_reload",
 	on_branch_change = "on_branch_change",
+	on_collection_change = "on_collection_change",
 }
 
 return M

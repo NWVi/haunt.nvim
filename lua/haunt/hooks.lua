@@ -28,6 +28,7 @@
 --- - `on_data_dir_change`: fired after the data directory is switched
 --- - `on_reload`: fired after the store is reloaded from disk and visuals are restored
 --- - `on_branch_change`: fired when the watcher detects a HEAD change, before reload runs
+--- - `on_collection_change`: fired after the active collection is switched and bookmarks are reloaded
 ---
 --- Example:
 --- >lua
@@ -158,8 +159,14 @@
 ---@field new_dir string|nil The new data directory path (nil means reset to default)
 ---@field old_dir string The previous data directory path
 
+--- Context passed to `on_collection_change` callbacks.
+--- Fired after the active collection is switched and bookmarks are reloaded.
+---@class CollectionChangeContext
+---@field new_collection string The now-active collection name
+---@field old_collection string The previously active collection name
+
 --- Reasons that can drive a reload. Threaded through `api.reload(reason)`.
----@alias ReloadReason "manual"|"branch_change"|"data_dir_change"|"migration"
+---@alias ReloadReason "manual"|"branch_change"|"data_dir_change"|"migration"|"collection_change"
 
 --- Context passed to `on_reload` callbacks.
 --- Fired at the end of `api.reload()`, after the store has been reloaded from
@@ -241,6 +248,10 @@
 ---@field once_branch_change fun(fn: fun(ctx: BranchChangeContext)): boolean
 ---@field off_branch_change fun(fn: fun(ctx: BranchChangeContext)): boolean
 ---@field emit_branch_change fun(ctx: BranchChangeContext): number, boolean
+---@field on_collection_change fun(fn: fun(ctx: CollectionChangeContext)): boolean
+---@field once_collection_change fun(fn: fun(ctx: CollectionChangeContext)): boolean
+---@field off_collection_change fun(fn: fun(ctx: CollectionChangeContext)): boolean
+---@field emit_collection_change fun(ctx: CollectionChangeContext): number, boolean
 ---@field _reset_for_testing fun()
 local M = {}
 
@@ -784,6 +795,35 @@ end
 ---@return boolean all_succeeded
 function M.emit_branch_change(ctx)
 	return _emit("on_branch_change", ctx)
+end
+
+--- Register a callback for the `on_collection_change` event.
+---@param fn fun(ctx: CollectionChangeContext)
+---@return boolean success
+function M.on_collection_change(fn)
+	return _on("on_collection_change", fn)
+end
+
+--- Register a one-shot callback for the `on_collection_change` event.
+---@param fn fun(ctx: CollectionChangeContext)
+---@return boolean success
+function M.once_collection_change(fn)
+	return _once("on_collection_change", fn)
+end
+
+--- Unregister a callback from the `on_collection_change` event.
+---@param fn fun(ctx: CollectionChangeContext)
+---@return boolean success
+function M.off_collection_change(fn)
+	return _off("on_collection_change", fn)
+end
+
+--- Emit the `on_collection_change` event to all registered callbacks.
+---@param ctx CollectionChangeContext
+---@return number total
+---@return boolean all_succeeded
+function M.emit_collection_change(ctx)
+	return _emit("on_collection_change", ctx)
 end
 
 --- Reset event handlers for testing purposes only

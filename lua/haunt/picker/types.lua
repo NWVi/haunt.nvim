@@ -17,17 +17,31 @@
 ---@field id string Unique bookmark identifier
 ---@field line number 1-based line number
 
+---@class CollectionItem
+---@field idx number Index in the collection list
+---@field score number Score for sorting (same as idx)
+---@field name string Collection name
+---@field active boolean Whether this is the active collection
+---@field text string Plain collection name (used for matching)
+---@field label string Display text, marking the active collection
+
 ---@class PickerModule
 ---@field show fun(opts?: table): boolean Show the picker
+---@field show_collections fun(opts?: table): boolean Show the collections picker
 ---@field is_available fun(): boolean Check if the picker backend is available
 ---@field set_picker_module fun(module: table) Set parent module reference for reopening
 
 ---@class PickerRouter
 ---@field show fun(opts?: table) Show the bookmark picker
+---@field show_collections fun(opts?: table) Show the collections picker
 
 ---@class EditAnnotationContext
 ---@field item PickerItem The bookmark item to edit
 ---@field close_picker fun() Function to close the current picker
 ---@field reopen_picker fun() Function to reopen the picker after edit
+
+---@class NewCollectionContext
+---@field close_picker fun() Function to close the current picker
+---@field reopen_picker fun() Function to reopen the picker after creating
 
 return {}

@@ -28,6 +28,9 @@ describe("haunt user commands", function()
 			"HauntQfAll",
 			"HauntMigrate",
 			"HauntReload",
+			"HauntCollections",
+			"HauntCollectionNew",
+			"HauntCollectionDelete",
 		}
 
 		for _, cmd in ipairs(expected_commands) do
@@ -243,6 +246,43 @@ describe("haunt user commands", function()
 			local ok = pcall(picker.show)
 			-- Should not throw, even if Snacks is not available (it notifies instead)
 			assert.is_true(ok)
+		end)
+	end)
+
+	describe("HauntCollectionDelete completion", function()
+		local data_dir
+		local collections
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			collections = require("haunt.collections")
+			collections.invalidate()
+		end)
+
+		after_each(function()
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		-- A Lua `complete` has customlist semantics: Neovim does not filter the
+		-- returned list against what was typed, so the command must do it.
+		it("filters on what has been typed", function()
+			collections.create("review")
+			collections.create("refactor")
+			collections.create("perf")
+
+			local matches = vim.fn.getcompletion("HauntCollectionDelete re", "cmdline")
+			table.sort(matches)
+			assert.are.same({ "refactor", "review" }, matches)
+		end)
+
+		it("omits the default collection, which cannot be deleted", function()
+			collections.create("review")
+
+			local matches = vim.fn.getcompletion("HauntCollectionDelete ", "cmdline")
+			assert.is_false(vim.tbl_contains(matches, "default"))
+			assert.is_true(vim.tbl_contains(matches, "review"))
 		end)
 	end)
 

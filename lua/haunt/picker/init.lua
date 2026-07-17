@@ -62,21 +62,57 @@ local fzf = lazy_picker("fzf")
 local fallback = lazy_picker("fallback")
 
 ---@private
+--- Try each backend in preference order, falling through on an unavailable one.
+---@param method "show"|"show_collections" Which picker entry point to call
 ---@param opts? table Options passed to the underlying picker
-local function handle_auto_picker(opts)
-	if snacks.show(opts) then
+local function handle_auto_picker(method, opts)
+	if snacks[method](opts) then
 		return
 	end
 
-	if telescope.show(opts) then
+	if telescope[method](opts) then
 		return
 	end
 
-	if fzf.show(opts) then
+	if fzf[method](opts) then
 		return
 	end
 
-	fallback.show(opts)
+	fallback[method](opts)
+end
+
+---@private
+--- Dispatch a picker entry point to the configured backend.
+---@param method "show"|"show_collections" Which picker entry point to call
+---@param opts? table Options passed to the underlying picker
+local function dispatch(method, opts)
+	ensure_modules()
+	---@cast haunt -nil
+
+	local picker_type = haunt.get_config().picker or "auto"
+
+	if picker_type == "snacks" then
+		if not snacks[method](opts) then
+			vim.notify("haunt.nvim: Snacks.nvim is not available", vim.log.levels.WARN)
+		end
+		return
+	end
+
+	if picker_type == "telescope" then
+		if not telescope[method](opts) then
+			vim.notify("haunt.nvim: Telescope.nvim is not available", vim.log.levels.WARN)
+		end
+		return
+	end
+
+	if picker_type == "fzf" then
+		if not fzf[method](opts) then
+			vim.notify("haunt.nvim: fzf-lua is not available", vim.log.levels.WARN)
+		end
+		return
+	end
+
+	handle_auto_picker(method, opts)
 end
 
 --- Open the bookmark picker.
@@ -107,33 +143,29 @@ end
 ---<
 ---@param opts? table Options passed to the underlying picker
 function M.show(opts)
-	ensure_modules()
-	---@cast haunt -nil
+	dispatch("show", opts)
+end
 
-	local picker_type = haunt.get_config().picker or "auto"
-
-	if picker_type == "snacks" then
-		if not snacks.show(opts) then
-			vim.notify("haunt.nvim: Snacks.nvim is not available", vim.log.levels.WARN)
-		end
-		return
-	end
-
-	if picker_type == "telescope" then
-		if not telescope.show(opts) then
-			vim.notify("haunt.nvim: Telescope.nvim is not available", vim.log.levels.WARN)
-		end
-		return
-	end
-
-	if picker_type == "fzf" then
-		if not fzf.show(opts) then
-			vim.notify("haunt.nvim: fzf-lua is not available", vim.log.levels.WARN)
-		end
-		return
-	end
-
-	handle_auto_picker(opts)
+--- Open the collections picker.
+---
+--- Displays the bookmark collections for the current project, marking the
+--- active one. Selecting a collection switches to it.
+---
+--- Picker actions: ~
+---   - `<CR>`: Switch to the selected collection
+---   - `n` (normal mode): Create a new collection
+---   - `d` (normal mode): Delete the selected collection
+---
+--- The keybindings can be customized via |HauntConfig|.picker_keys. The
+--- `vim.ui.select` fallback supports selection only; use
+--- `:HauntCollectionNew` and `:HauntCollectionDelete` there.
+---
+---@usage >lua
+---   require('haunt.picker').show_collections()
+---<
+---@param opts? table Options passed to the underlying picker
+function M.show_collections(opts)
+	dispatch("show_collections", opts)
 end
 
 return M

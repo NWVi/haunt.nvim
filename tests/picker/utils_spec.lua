@@ -346,4 +346,47 @@ describe("haunt.picker.utils", function()
 			assert.is_false(reopen_called)
 		end)
 	end)
+
+	describe("build_collection_items", function()
+		it("returns an item per collection", function()
+			local items = utils.build_collection_items({ "default", "review" }, "default")
+			assert.are.equal(2, #items)
+			assert.are.equal("default", items[1].name)
+			assert.are.equal("review", items[2].name)
+		end)
+
+		it("flags only the active collection", function()
+			local items = utils.build_collection_items({ "default", "review" }, "review")
+			assert.is_false(items[1].active)
+			assert.is_true(items[2].active)
+		end)
+
+		it("marks the active collection in the label", function()
+			local items = utils.build_collection_items({ "default", "review" }, "review")
+			assert.is_truthy(items[2].label:match("^●"))
+			assert.is_truthy(items[1].label:match("^%s"))
+		end)
+
+		it("keeps the plain name as match text", function()
+			local items = utils.build_collection_items({ "review" }, "review")
+			assert.are.equal("review", items[1].text)
+		end)
+
+		it("assigns idx and score in list order", function()
+			local items = utils.build_collection_items({ "default", "a", "b" }, "default")
+			for i, item in ipairs(items) do
+				assert.are.equal(i, item.idx)
+				assert.are.equal(i, item.score)
+			end
+		end)
+
+		it("handles an empty list", function()
+			assert.are.same({}, utils.build_collection_items({}, "default"))
+		end)
+
+		it("marks nothing active when the active name is absent", function()
+			local items = utils.build_collection_items({ "default" }, "ghost")
+			assert.is_false(items[1].active)
+		end)
+	end)
 end)

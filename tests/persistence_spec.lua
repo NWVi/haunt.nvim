@@ -92,6 +92,83 @@ describe("haunt.persistence", function()
 			assert.are.equal(path1, path2)
 		end)
 
+		describe("collection keying", function()
+			local config
+
+			before_each(function()
+				config = require("haunt.config")
+			end)
+
+			-- The zero-migration guarantee. The default collection must not
+			-- contribute to the storage key, so files written before collections
+			-- existed keep resolving to the same filename. If this breaks, every
+			-- existing user's bookmarks are silently orphaned.
+			it("hashes the default collection identically to the pre-collections key", function()
+				config.setup({ per_branch_bookmarks = true })
+				local info = require("haunt.project").get_info()
+
+				-- Rebuild the key exactly as haunt did before collections existed
+				local legacy_key = info.project_id .. "|" .. (info.branch or "__default__")
+				local expected = vim.fn.sha256(legacy_key):sub(1, 12) .. ".json"
+
+				local actual = vim.fn.fnamemodify(persistence.get_storage_path(), ":t")
+				assert.are.equal(expected, actual)
+			end)
+
+			it("hashes the default collection identically when per_branch is off", function()
+				config.setup({ per_branch_bookmarks = false })
+				local info = require("haunt.project").get_info()
+
+				local expected = vim.fn.sha256(info.project_id):sub(1, 12) .. ".json"
+				local actual = vim.fn.fnamemodify(persistence.get_storage_path(), ":t")
+				assert.are.equal(expected, actual)
+			end)
+
+			it("pinning the default collection matches the active default", function()
+				local pinned = persistence.get_storage_path({ collection = persistence.DEFAULT_COLLECTION })
+				assert.are.equal(persistence.get_storage_path(), pinned)
+			end)
+
+			it("uses a different path for a non-default collection", function()
+				local default_path = persistence.get_storage_path({ collection = "default" })
+				local other_path = persistence.get_storage_path({ collection = "review" })
+				assert.are_not.equal(default_path, other_path)
+			end)
+
+			it("uses a different path per collection", function()
+				local review = persistence.get_storage_path({ collection = "review" })
+				local perf = persistence.get_storage_path({ collection = "perf" })
+				assert.are_not.equal(review, perf)
+			end)
+
+			it("is case-sensitive across collections", function()
+				local lower = persistence.get_storage_path({ collection = "review" })
+				local upper = persistence.get_storage_path({ collection = "Review" })
+				assert.are_not.equal(lower, upper)
+			end)
+
+			it("varies by branch for the same collection", function()
+				config.setup({ per_branch_bookmarks = true })
+				local a = persistence._storage_path_for("proj", "main", "review", true)
+				local b = persistence._storage_path_for("proj", "feature", "review", true)
+				assert.are_not.equal(a, b)
+			end)
+
+			-- Git forbids "^" in refnames, so a branch segment can never collide
+			-- with the collection segment.
+			it("cannot collide with a branch-keyed path", function()
+				local branch_keyed = persistence._storage_path_for("proj", "review", nil, true)
+				local collection_keyed = persistence._storage_path_for("proj", nil, "review", false)
+				assert.are_not.equal(branch_keyed, collection_keyed)
+			end)
+
+			it("_storage_path_for treats nil collection as the default", function()
+				local implicit = persistence._storage_path_for("proj", "main", nil, true)
+				local explicit = persistence._storage_path_for("proj", "main", "default", true)
+				assert.are.equal(implicit, explicit)
+			end)
+		end)
+
 		describe("per_branch_bookmarks config", function()
 			local config
 

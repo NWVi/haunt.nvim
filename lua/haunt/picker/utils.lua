@@ -189,4 +189,46 @@ function M.handle_edit_annotation(ctx)
 	ctx.reopen_picker()
 end
 
+--- Build display items for the collections picker (shared across implementations)
+---@param names string[] Collection names
+---@param active string The active collection name
+---@return CollectionItem[] items
+function M.build_collection_items(names, active)
+	local items = {}
+
+	for idx, name in ipairs(names) do
+		local is_active = name == active
+		table.insert(items, {
+			idx = idx,
+			score = idx,
+			name = name,
+			active = is_active,
+			text = name,
+			label = (is_active and "● " or "  ") .. name,
+		})
+	end
+
+	return items
+end
+
+--- Handle creating a new collection (shared across picker implementations)
+---@param ctx NewCollectionContext
+function M.handle_new_collection(ctx)
+	local api_module = M.get_api()
+
+	-- Close picker temporarily to show input prompt clearly
+	ctx.close_picker()
+
+	local name = vim.fn.input({ prompt = "Collection: " })
+	if name == "" then
+		ctx.reopen_picker()
+		return
+	end
+
+	-- create_collection switches to the new collection, so there's nothing to
+	-- reopen onto that the user still wants; but reopening shows the new state.
+	api_module.create_collection(name)
+	ctx.reopen_picker()
+end
+
 return M

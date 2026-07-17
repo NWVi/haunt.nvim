@@ -103,7 +103,10 @@ local function resolve_paths()
 
 	local per_branch = config.per_branch_bookmarks
 	local old_path = persistence._get_v1_storage_path(info.root, info.branch, per_branch)
-	local new_path = persistence.get_storage_path()
+	-- Pin to the default collection: v1 files predate collections, so their
+	-- bookmarks are default-collection data. Resolving the active collection
+	-- here would migrate them into whichever collection happened to be active.
+	local new_path = persistence.get_storage_path({ collection = persistence.DEFAULT_COLLECTION })
 	return { info = info, old_path = old_path, new_path = new_path }
 end
 

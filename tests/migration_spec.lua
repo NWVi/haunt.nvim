@@ -456,6 +456,49 @@ describe("haunt.migration", function()
 		assert.is_not_nil(success.msg:find("1 bookmarks", 1, true))
 	end)
 
+	-- v1 files predate collections, so their bookmarks belong to the default
+	-- collection. If migration resolved the *active* collection instead, a user
+	-- with a non-default collection active would have their v1 bookmarks
+	-- migrated into the wrong collection's file.
+	describe("collection pinning", function()
+		local collections
+
+		before_each(function()
+			collections = require("haunt.collections")
+			collections.invalidate()
+		end)
+
+		it("migrates v1 data into the default collection while another is active", function()
+			collections.create("review")
+			collections.set_active("review")
+			assert.are.equal("review", collections.get_active())
+
+			local old_path = v1_path_for(fake_project_root, fake_branch, fake_data_dir, true)
+			local default_path = v2_path_for(fake_project_id, fake_branch, fake_data_dir, true)
+			local active_path = persistence.get_storage_path()
+
+			-- Precondition: the active collection resolves elsewhere, so a wrong
+			-- target would be observable.
+			assert.are_not.equal(default_path, active_path)
+
+			write_json(old_path, {
+				version = 1,
+				bookmarks = {
+					{ file = "/fake/proj/src/main.lua", line = 10, id = "id1", note = "First" },
+				},
+			})
+
+			migration.migrate_current_project()
+
+			assert.are.equal(1, vim.fn.filereadable(default_path))
+			assert.are.equal(0, vim.fn.filereadable(active_path))
+
+			local migrated = read_json(default_path)
+			assert.are.equal(2, migrated.version)
+			assert.are.equal("First", migrated.bookmarks[1].note)
+		end)
+	end)
+
 	describe("auto_migrate", function()
 		before_each(function()
 			-- Each auto_migrate test starts with a clean session table so

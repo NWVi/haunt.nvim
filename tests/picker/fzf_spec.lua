@@ -438,4 +438,113 @@ describe("haunt.picker.fzf with mock", function()
 			assert.is_true(ok)
 		end)
 	end)
+
+	describe("show_collections()", function()
+		local data_dir
+		local collections
+		local original_confirm
+		local original_input
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			collections = require("haunt.collections")
+			collections.invalidate()
+
+			original_confirm = vim.fn.confirm
+			vim.fn.confirm = function()
+				return 1
+			end
+			original_input = vim.fn.input
+		end)
+
+		after_each(function()
+			vim.fn.confirm = original_confirm
+			vim.fn.input = original_input
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		--- Find the display label fzf was handed for a given collection.
+		---@param name string
+		---@return string|nil
+		local function label_for(name)
+			for _, label in ipairs(mock_fzf.fzf_exec_items or {}) do
+				if label:match(vim.pesc(name) .. "$") then
+					return label
+				end
+			end
+			return nil
+		end
+
+		it("returns true when fzf-lua is available", function()
+			assert.is_true(fzf_picker.show_collections())
+			assert.is_true(mock_fzf.fzf_exec_called)
+		end)
+
+		it("returns false when fzf-lua is unavailable", function()
+			package.loaded["fzf-lua"] = nil
+			assert.is_false(fzf_picker.show_collections())
+		end)
+
+		it("uses a Collections prompt", function()
+			fzf_picker.show_collections()
+			assert.are.equal("Collections> ", mock_fzf.fzf_exec_opts.prompt)
+		end)
+
+		it("lists the default collection with no registry", function()
+			fzf_picker.show_collections()
+			assert.are.equal(1, #mock_fzf.fzf_exec_items)
+			assert.is_not_nil(label_for("default"))
+		end)
+
+		it("switches via the default action", function()
+			collections.create("review")
+			fzf_picker.show_collections()
+
+			execute_action(mock_fzf.fzf_exec_opts, "default", { label_for("review") })
+
+			assert.are.equal("review", collections.get_active())
+		end)
+
+		it("handles empty selection on switch", function()
+			fzf_picker.show_collections()
+			local ok = pcall(execute_action, mock_fzf.fzf_exec_opts, "default", {})
+			assert.is_true(ok)
+		end)
+
+		it("deletes via the configured key", function()
+			collections.create("review")
+			fzf_picker.show_collections()
+
+			execute_action(mock_fzf.fzf_exec_opts, "d", { label_for("review") })
+
+			assert.is_false(collections.exists("review"))
+		end)
+
+		it("does not delete the default collection", function()
+			fzf_picker.show_collections()
+
+			execute_action(mock_fzf.fzf_exec_opts, "d", { label_for("default") })
+
+			assert.is_true(collections.exists("default"))
+		end)
+
+		it("handles empty selection on delete", function()
+			fzf_picker.show_collections()
+			local ok = pcall(execute_action, mock_fzf.fzf_exec_opts, "d", {})
+			assert.is_true(ok)
+		end)
+
+		it("creates via the configured key", function()
+			vim.fn.input = function()
+				return "fresh"
+			end
+
+			fzf_picker.show_collections()
+			execute_action(mock_fzf.fzf_exec_opts, "n", {})
+
+			assert.is_true(collections.exists("fresh"))
+		end)
+	end)
 end)
