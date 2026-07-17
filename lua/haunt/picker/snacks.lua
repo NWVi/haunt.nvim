@@ -259,6 +259,18 @@ function M.show_collections(opts)
 		finder = function()
 			return utils.build_collection_items(collections.list(), collections.get_active())
 		end,
+		-- Collection items have no `file`, so Snacks' default file previewer
+		-- errors on them. Show the collection's bookmarks instead; it's the
+		-- thing you want to know before switching.
+		---@param ctx snacks.picker.preview.ctx
+		preview = function(ctx)
+			ctx.preview:reset()
+			ctx.preview:set_title(ctx.item.name)
+			ctx.preview:set_lines(utils.build_collection_preview(ctx.item.name, ctx.item.active))
+		end,
+		-- Keep the finder's order (default first, then alphabetical). Snacks
+		-- sorts by "score:desc" by default, which would reverse it.
+		sort = { fields = { "idx" } },
 		format = function(item, _)
 			local result = {}
 

@@ -342,10 +342,28 @@ function M.show_collections(opts)
 		return true
 	end
 
+	-- Preview the collection's bookmarks: the thing you want to know before
+	-- switching. The grep previewer used for bookmarks expects a file, and
+	-- collection entries have none.
+	local previewers = require("telescope.previewers")
+	local collection_previewer = previewers.new_buffer_previewer({
+		title = "Bookmarks",
+		define_preview = function(self, entry)
+			vim.api.nvim_buf_set_lines(
+				self.state.bufnr,
+				0,
+				-1,
+				false,
+				utils.build_collection_preview(entry.value.name, entry.value.active)
+			)
+		end,
+	})
+
 	local picker_opts = vim.tbl_deep_extend("force", {
 		prompt_title = "Collections",
 		finder = collection_finder(),
 		sorter = conf.generic_sorter({}),
+		previewer = collection_previewer,
 		attach_mappings = attach_mappings,
 	}, opts or {})
 

@@ -211,6 +211,67 @@ function M.build_collection_items(names, active)
 	return items
 end
 
+--- Read a collection's bookmarks without switching to it.
+---
+--- The active collection is read from the store so its lines reflect where the
+--- bookmarks currently sit (extmarks move with edits, and those positions only
+--- reach disk on the next save). Every other collection is read straight from
+--- its storage file.
+---@param name string Collection name
+---@param active boolean Whether this is the active collection
+---@return Bookmark[]|nil bookmarks nil when the collection's file could not be read
+function M.read_collection_bookmarks(name, active)
+	if active then
+		return M.get_api().get_bookmarks()
+	end
+
+	local persistence = require("haunt.persistence")
+	local path = persistence.get_storage_path({ collection = name })
+
+	-- An empty collection has no file at all (an empty save deletes it), which
+	-- is a legitimately empty collection rather than a read failure.
+	if vim.fn.filereadable(path) ~= 1 then
+		return {}
+	end
+
+	return persistence.load_bookmarks(path)
+end
+
+--- Build the preview lines for a collection: the bookmarks it holds.
+---@param name string Collection name
+---@param active boolean Whether this is the active collection
+---@return string[] lines
+function M.build_collection_preview(name, active)
+	local bookmarks = M.read_collection_bookmarks(name, active)
+
+	if not bookmarks then
+		return { "Could not read this collection's bookmarks." }
+	end
+
+	if #bookmarks == 0 then
+		return { "No bookmarks in this collection." }
+	end
+
+	local sorted = vim.deepcopy(bookmarks)
+	table.sort(sorted, function(a, b)
+		if a.file == b.file then
+			return a.line < b.line
+		end
+		return a.file < b.file
+	end)
+
+	local lines = {}
+	for _, bm in ipairs(sorted) do
+		local line = vim.fn.fnamemodify(bm.file, ":.") .. ":" .. bm.line
+		if bm.note and bm.note ~= "" then
+			line = line .. "  " .. bm.note
+		end
+		table.insert(lines, line)
+	end
+
+	return lines
+end
+
 --- Handle creating a new collection (shared across picker implementations)
 ---@param ctx NewCollectionContext
 function M.handle_new_collection(ctx)

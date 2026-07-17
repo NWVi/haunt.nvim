@@ -389,4 +389,84 @@ describe("haunt.picker.utils", function()
 			assert.is_false(items[1].active)
 		end)
 	end)
+
+	describe("build_collection_preview", function()
+		local data_dir
+		local api
+		local collections
+		local bufnr, test_file
+
+		before_each(function()
+			data_dir = helpers.create_temp_data_dir()
+			require("haunt.persistence").set_data_dir(data_dir)
+			collections = require("haunt.collections")
+			collections.invalidate()
+			api = require("haunt.api")
+			api._reset_for_testing()
+			bufnr, test_file = helpers.create_test_buffer()
+		end)
+
+		after_each(function()
+			helpers.cleanup_buffer(bufnr, test_file)
+			require("haunt.persistence").set_data_dir(nil)
+			helpers.cleanup_temp_dir(data_dir)
+		end)
+
+		it("reports an empty collection", function()
+			local lines = utils.build_collection_preview("default", true)
+			assert.are.equal(1, #lines)
+			assert.is_truthy(lines[1]:match("No bookmarks"))
+		end)
+
+		it("lists the active collection's bookmarks with notes", function()
+			vim.api.nvim_win_set_cursor(0, { 1, 0 })
+			api.annotate("first note")
+
+			local lines = utils.build_collection_preview("default", true)
+			assert.are.equal(1, #lines)
+			assert.is_truthy(lines[1]:match("first note"))
+			assert.is_truthy(lines[1]:match(":1"))
+		end)
+
+		-- An inactive collection is read straight from its storage file, so its
+		-- bookmarks are visible without switching to it.
+		it("reads an inactive collection from disk", function()
+			api.create_collection("review")
+			vim.api.nvim_win_set_cursor(0, { 2, 0 })
+			api.annotate("review note")
+			api.switch_collection("default")
+
+			local lines = utils.build_collection_preview("review", false)
+			assert.are.equal(1, #lines)
+			assert.is_truthy(lines[1]:match("review note"))
+		end)
+
+		it("sorts by file then line", function()
+			vim.api.nvim_win_set_cursor(0, { 3, 0 })
+			api.annotate("third")
+			vim.api.nvim_win_set_cursor(0, { 1, 0 })
+			api.annotate("first")
+
+			local lines = utils.build_collection_preview("default", true)
+			assert.are.equal(2, #lines)
+			assert.is_truthy(lines[1]:match("first"))
+			assert.is_truthy(lines[2]:match("third"))
+		end)
+
+		-- An empty collection has no storage file at all, which is not a failure.
+		it("treats a missing storage file as empty, not an error", function()
+			collections.create("never-used")
+			local lines = utils.build_collection_preview("never-used", false)
+			assert.is_truthy(lines[1]:match("No bookmarks"))
+		end)
+
+		it("reports a collection whose file cannot be read", function()
+			collections.create("broken")
+			local persistence = require("haunt.persistence")
+			vim.fn.writefile({ "{ not json" }, persistence.get_storage_path({ collection = "broken" }))
+
+			local lines = utils.build_collection_preview("broken", false)
+			assert.is_truthy(lines[1]:match("Could not read"))
+		end)
+	end)
 end)

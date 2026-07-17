@@ -154,6 +154,12 @@ describe("haunt.picker.telescope", function()
 					return m.current_picker
 				end,
 			}
+			package.loaded["telescope.previewers"] = {
+				new_buffer_previewer = function(cfg)
+					m.previewer = cfg
+					return cfg
+				end,
+			}
 
 			return m
 		end
@@ -184,6 +190,7 @@ describe("haunt.picker.telescope", function()
 				"telescope.config",
 				"telescope.actions",
 				"telescope.actions.state",
+				"telescope.previewers",
 			}) do
 				package.loaded[name] = nil
 			end
@@ -246,6 +253,43 @@ describe("haunt.picker.telescope", function()
 			telescope_picker.show_collections()
 			mock.selected = nil
 			assert.is_true(pcall(mock.select_default))
+		end)
+
+		-- The bookmark picker's grep previewer expects a file, which collection
+		-- entries have none of; preview their bookmarks instead.
+		it("previews the collection's bookmarks", function()
+			local bufnr, test_file = helpers.create_test_buffer()
+
+			api.create_collection("review")
+			vim.api.nvim_win_set_cursor(0, { 1, 0 })
+			api.annotate("review note")
+			api.switch_collection("default")
+
+			telescope_picker.show_collections()
+			assert.is_not_nil(mock.previewer, "no previewer was configured")
+
+			local preview_buf = vim.api.nvim_create_buf(false, true)
+			mock.previewer.define_preview({ state = { bufnr = preview_buf } }, entry_for("review"))
+
+			local lines = vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)
+			assert.are.equal(1, #lines)
+			assert.is_truthy(lines[1]:match("review note"))
+
+			vim.api.nvim_buf_delete(preview_buf, { force = true })
+			helpers.cleanup_buffer(bufnr, test_file)
+		end)
+
+		it("previews an empty collection", function()
+			collections.create("empty-one")
+			telescope_picker.show_collections()
+
+			local preview_buf = vim.api.nvim_create_buf(false, true)
+			mock.previewer.define_preview({ state = { bufnr = preview_buf } }, entry_for("empty-one"))
+
+			local lines = vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)
+			assert.is_truthy(lines[1]:match("No bookmarks"))
+
+			vim.api.nvim_buf_delete(preview_buf, { force = true })
 		end)
 
 		it("maps the configured create and delete keys", function()

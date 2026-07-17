@@ -521,6 +521,103 @@ describe("haunt.picker.snacks", function()
 			assert.is_true(ok)
 		end)
 
+		describe("preview", function()
+			local preview_ctx
+
+			--- Stand in for snacks' preview object, capturing what we render.
+			local function make_ctx(item)
+				preview_ctx = { lines = nil, title = nil, reset = false }
+				return {
+					item = item,
+					preview = {
+						reset = function()
+							preview_ctx.reset = true
+						end,
+						set_title = function(_, title)
+							preview_ctx.title = title
+						end,
+						set_lines = function(_, lines)
+							preview_ctx.lines = lines
+						end,
+					},
+				}
+			end
+
+			--- Drive the picker's preview for a named collection.
+			local function preview_for(name)
+				snacks_picker.show_collections()
+				local items = execute_finder(mock_snacks.picker_config)
+				local target
+				for _, item in ipairs(items) do
+					if item.name == name then
+						target = item
+					end
+				end
+				mock_snacks.picker_config.preview(make_ctx(target))
+				return preview_ctx
+			end
+
+			-- Collection items have no `file`, so snacks' default file previewer
+			-- errors on them ("Item has no `file`").
+			it("is configured, so the default file previewer is not used", function()
+				snacks_picker.show_collections()
+				assert.is_function(mock_snacks.picker_config.preview)
+			end)
+
+			it("titles the preview with the collection name", function()
+				collections.create("review")
+				local ctx = preview_for("review")
+				assert.are.equal("review", ctx.title)
+			end)
+
+			it("reports an empty collection", function()
+				collections.create("review")
+				local ctx = preview_for("review")
+				assert.are.equal(1, #ctx.lines)
+				assert.is_truthy(ctx.lines[1]:match("No bookmarks"))
+			end)
+
+			it("lists the bookmarks of a non-active collection", function()
+				local bufnr, test_file = helpers.create_test_buffer()
+
+				api.create_collection("review")
+				vim.api.nvim_win_set_cursor(0, { 1, 0 })
+				api.annotate("first note")
+				api.switch_collection("default")
+
+				-- review is now inactive: its bookmarks come off disk.
+				local ctx = preview_for("review")
+
+				assert.are.equal(1, #ctx.lines)
+				assert.is_truthy(ctx.lines[1]:match("first note"))
+				assert.is_truthy(ctx.lines[1]:match(":1"))
+
+				helpers.cleanup_buffer(bufnr, test_file)
+			end)
+
+			it("lists the bookmarks of the active collection", function()
+				local bufnr, test_file = helpers.create_test_buffer()
+
+				vim.api.nvim_win_set_cursor(0, { 1, 0 })
+				api.annotate("active note")
+
+				local ctx = preview_for("default")
+
+				assert.are.equal(1, #ctx.lines)
+				assert.is_truthy(ctx.lines[1]:match("active note"))
+
+				helpers.cleanup_buffer(bufnr, test_file)
+			end)
+		end)
+
+		-- Snacks' default sort ("score:desc", then text length) would reorder the
+		-- list by collection name length, floating a long name above `default`.
+		-- Pin it to the finder's order: default first, then alphabetical.
+		it("preserves the finder's order", function()
+			snacks_picker.show_collections()
+			assert.are.same({ fields = { "idx" } }, mock_snacks.picker_config.sort)
+		end)
+
 		it("binds the configured keys", function()
 			snacks_picker.show_collections()
 			local keys = mock_snacks.picker_config.win.input.keys
